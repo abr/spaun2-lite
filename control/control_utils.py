@@ -33,13 +33,10 @@ def rot_vec_by_quat(vec, quat):
     """
     #NOTE look at implementing the simplified method here
     # https://gamedev.stackexchange.com/questions/28395/rotating-vector3-by-a-quaternion
-    print('starting: ', vec)
-    print('quat: ', quat)
     quat /= np.linalg.norm(quat)
     # vec /= np.linalg.norm(vec)
     vec_quat = np.array([0, vec[0], vec[1], vec[2]])
     new_vec = tform.quaternion_multiply(tform.quaternion_multiply(quat, vec_quat), tform.quaternion_conjugate(quat))
-    print('rotated: ', new_vec)
 
     return new_vec[1:]
 
@@ -131,21 +128,93 @@ def get_target_orientation(local_start_heading, global_target_heading, transform
     return quat
 
 
-def plot_path_with_local_frame(
+def plot_path_from_quat(
+       pos_path, quat_path, global_start_heading, sampling=20, show_axes=False):
+    """
+    Plots the path of the EE over time, but also adds the local reference frame and heading we are
+    trying to align with a global heading
+    """
+    global_headings = []
+    pos_path = np.asarray(pos_path).T
+
+    for ii, quat in enumerate(quat_path):
+        current_heading = rot_vec_by_quat(global_start_heading, quat)
+        global_headings.append(current_heading)
+
+    global_headings = np.asarray(global_headings).T[:, ::sampling]
+
+    fig = plt.figure()
+    ax = fig.gca(projection='3d')
+    ax.scatter(pos_path[0], pos_path[1], pos_path[2], color='k', label='path')
+    ax.quiver(
+            pos_path[0][::sampling],
+            pos_path[1][::sampling],
+            pos_path[2][::sampling],
+            global_headings[0],
+            global_headings[1],
+            global_headings[2],
+            color='tab:purple',
+            label='local heading')
+
+    if show_axes:
+        axes = {'x': [1, 0, 0], 'y': [0, 1, 0], 'z': [0, 0, 1]}
+        ax.quiver(
+                pos_path[0][::sampling],
+                pos_path[1][::sampling],
+                pos_path[2][::sampling],
+                axes['x'][0],
+                axes['x'][1],
+                axes['x'][2],
+                color='r',
+                linestyle='-',
+                label='x')
+
+        ax.quiver(
+                pos_path[0][::sampling],
+                pos_path[1][::sampling],
+                pos_path[2][::sampling],
+                axes['y'][0],
+                axes['y'][1],
+                axes['y'][2],
+                color='g',
+                linestyle='-',
+                label='y')
+
+        ax.quiver(
+                pos_path[0][::sampling],
+                pos_path[1][::sampling],
+                pos_path[2][::sampling],
+                axes['z'][0],
+                axes['z'][1],
+                axes['z'][2],
+                color='b',
+                linestyle='-',
+                label='z')
+
+    ax.set_xlim(-2, 2)
+    ax.set_ylim(-2, 2)
+    ax.set_zlim(0, 2)
+    plt.legend()
+    plt.show()
+
+
+def plot_path_from_q(
         q_track, local_start_heading, robot_config, sampling=20):
     """
     Plots the path of the EE over time, but also adds the local reference frame and heading we are
     trying to align with a global heading
     """
     global_headings = []
-    xyz_path = []
+    pos_path = []
     local_axes = {'x': [], 'y': [], 'z': []}
     x = [1, 0, 0]
     y = [0, 1, 0]
     z = [0, 0, 1]
 
     for state in q_track:
-        xyz_path.append(robot_config.Tx('EE', state))
+        pos_path.append(robot_config.Tx('EE', state))
+
+    for state in q_track[::sampling]:
         transform = robot_config.T('EE', state)
         global_headings.append(
                 local_to_global_heading(local_start_heading, transform))
@@ -158,31 +227,89 @@ def plot_path_with_local_frame(
         local_axes['z'].append(
                 local_to_global_heading(z, transform))
 
-    xyz_full_path = np.asarray(xyz_path).T
-    # TODO add the sampling before the extra math done above
-    # NOTE we still need / want the full path for plotting
-    xyz_path = xyz_full_path[:, ::sampling]
-    local_axes['x'] = np.asarray(local_axes['x']).T[:, ::sampling]
-    local_axes['y'] = np.asarray(local_axes['y']).T[:, ::sampling]
-    local_axes['z'] = np.asarray(local_axes['z']).T[:, ::sampling]
-    global_headings = np.asarray(global_headings).T[:, ::sampling]
-    print('local x: ', np.asarray(local_axes['x']).shape)
-    print('global: ', np.asarray(global_headings).shape)
+    pos_path = np.asarray(pos_path).T
+    local_axes['x'] = np.asarray(local_axes['x']).T
+    local_axes['y'] = np.asarray(local_axes['y']).T
+    local_axes['z'] = np.asarray(local_axes['z']).T
+    global_headings = np.asarray(global_headings).T
 
-    # dx = np.zeros(len(state))
-    # dy = np.zeros(len(state))
-    # dz = np.ones(len(state))
-    # print(dx.shape)
-    #
     fig = plt.figure()
     ax = fig.gca(projection='3d')
-    ax.scatter(xyz_full_path[0], xyz_full_path[1], xyz_full_path[2], color='k', label='path')
-    ax.quiver(xyz_path[0], xyz_path[1], xyz_path[2], global_headings[0], global_headings[1], global_headings[2], color='tab:purple', label='local heading')
-    ax.quiver(xyz_path[0], xyz_path[1], xyz_path[2], local_axes['x'][0], local_axes['x'][1], local_axes['x'][2], color='r', linestyle='-', label='local x')
-    ax.quiver(xyz_path[0], xyz_path[1], xyz_path[2], local_axes['y'][0], local_axes['y'][1], local_axes['y'][2], color='g', linestyle='-', label='local y')
-    ax.quiver(xyz_path[0], xyz_path[1], xyz_path[2], local_axes['z'][0], local_axes['z'][1], local_axes['z'][2], color='b', linestyle='-', label='local z')
+    ax.scatter(
+            pos_path[0],
+            pos_path[1],
+            pos_path[2],
+            color='k',
+            label='path')
+
+    ax.quiver(
+            pos_path[0][::sampling],
+            pos_path[1][::sampling],
+            pos_path[2][::sampling],
+            global_headings[0],
+            global_headings[1],
+            global_headings[2],
+            color='tab:purple',
+            label='local heading')
+
+    ax.quiver(
+            pos_path[0][::sampling],
+            pos_path[1][::sampling],
+            pos_path[2][::sampling],
+            local_axes['x'][0],
+            local_axes['x'][1],
+            local_axes['x'][2],
+            color='r',
+            linestyle='-',
+            label='local x')
+
+    ax.quiver(
+            pos_path[0][::sampling],
+            pos_path[1][::sampling],
+            pos_path[2][::sampling],
+            local_axes['y'][0],
+            local_axes['y'][1],
+            local_axes['y'][2],
+            color='g',
+            linestyle='-',
+            label='local y')
+
+    ax.quiver(
+            pos_path[0][::sampling],
+            pos_path[1][::sampling],
+            pos_path[2][::sampling],
+            local_axes['z'][0],
+            local_axes['z'][1],
+            local_axes['z'][2],
+            color='b',
+            linestyle='-',
+            label='local z')
+
     ax.set_xlim(-2, 2)
     ax.set_ylim(-2, 2)
     ax.set_zlim(0, 2)
     plt.legend()
     plt.show()
+
+# def generate_path_to_surface(start_state, target_pos, approach_heading, local_heading_to_align, approach_offset=0):
+#     """
+#     Generates a gaussian path to a surface, given a location on the surface to approach
+#     and the approach heading. The approach offset backs the EE off from the surface target position
+#     specified
+#
+#     Parameters
+#     ----------
+#     target_pos: 3D np.array
+#         the cartesian position on the surface to approach
+#     approach_heading: 3D np.array
+#         the cartesian vector that points towards the direction we want to be facing
+#         when we get to the surface
+#     local_heading_to_align: 3D np.array
+#         the cartesian vector in our EE local coordinates that we want to align with the
+#         approach heading
+#     approach_offset: float, Optional (Default: 0.0)
+#         the distance [meters] to be away from the position on the surface. This can be used
+#         for accounting for the distance of a pen or other pointing tool.
+#
+#     """
+

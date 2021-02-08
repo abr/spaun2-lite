@@ -6,7 +6,7 @@ local_start_heading = [1, 1, 1]
 # recorded joint information during arm reach
 q_track = np.load('q_track.npz')['q']
 # plot and sample trajectory arrows every 50 steps for visibility
-utils.plot_path_with_local_frame(
+utils.plot_path_from_q(
         q_track=q_track,
         local_start_heading=local_start_heading,
         robot_config=abr_jaco2.Config(),
