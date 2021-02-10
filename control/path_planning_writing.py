@@ -17,16 +17,49 @@ from gauss_path_planner import GaussianPathPlanner
 import control_utils
 
 import matplotlib.pyplot as plt
+#TODO
+"""
+1) scale dmp path to desired writing size
+2) arc path up between characters to avoid writing letter
+3) add checks to make sure we're not writing further than we can reach
+4) generalize writing to any plane
+5) add offset for pen distance
+"""
 
 # load our alphanumerical path
 if len(sys.argv) > 1:
-    number = sys.argv[1]
+    text = sys.argv[1]
 else:
-    number = '1'
+    text = '1'
 
-print('Loading alphanumerical path')
-alphanum_path = 'handwriting_trajectories/%s.npz' % number
-alphanum_path = np.load(alphanum_path)['arr_0'].T
+axes = 'rxyz'                                   # for conversion between quat and euler
+local_start_heading = np.array([0, 0, 1])       # the direction in EE local coordinates that the pen tip is facing
+global_target_heading = np.array([0, 0, -1])    # the target direction in world coordinates to be writing
+target_pos = np.array([0.7, 0.5, 0.6])          # where to start writing on the plane defined by global_target_heading
+letter_spacing = 1                            # in meters
+dmp_steps = 100
+
+def load_paths(text, save_loc=None, plot=False):
+    print('Loading alphanumerical path')
+    if save_loc is None:
+        save_loc = 'handwriting_trajectories'
+
+    text_paths = {}
+    for char in text:
+        if char not in text_paths.keys():
+            char_save_loc = '%s/%s.npz' % (save_loc, char)
+            char_path = np.load(char_save_loc)['arr_0'].T
+            text_paths[char] = char_path
+
+            if plot:
+                plt.figure()
+                plt.plot(char_path[0], char_path[1], label='char')
+                plt.legend()
+                plt.show()
+
+    return text_paths
+
+text_paths = load_paths(text, plot=False)
 
 # instantiate robot config and comm interface
 print('Connecting to arm and interface')
@@ -39,22 +72,13 @@ interface.send_target_angles(robot_config.START_ANGLES)
 # get our joint angles at start position
 print('Getting start state information')
 q_start = interface.get_feedback()['q']
-interface.disconnect()
-# get our transform to get our local heading in global coordinates
 T_EE = robot_config.T('EE', q_start)
-
-# the direction in EE local coordinates that the pen tip is facing
-local_start_heading = np.array([0, 0, 1])
-# local_start_heading = np.array([1, 1, 1])
-# the target direction in world coordinates to be writing
-# global_target_heading = np.array([1, 0, 0])
-global_target_heading = np.array([0, 0, -1])
+#NOTE disconnecting during testing, but eventuall will move to the path
+interface.disconnect()
 
 # where we want to approach for writing
 print('Getting target quaternion to align headings')
-axes = 'rxyz'
-target_pos = np.array([0.7, 0.5, 0.6])
-target_quat = control_utils.get_target_orientation(
+target_quat = control_utils.get_target_orientation_from_heading(
         local_start_heading,
         global_target_heading,
         T_EE,
@@ -69,14 +93,15 @@ start_euler = transform.euler_from_quaternion(start_quat, axes)
 
 # get our path to the writing start position
 print('Generating path to board')
-path_to_board = GaussianPathPlanner(
+gauss_path_planner = GaussianPathPlanner(
             max_a=5,
             max_v=5,
             dt=0.001,
             axes=axes
     )
 
-path_to_board.generate_path(
+# generate the path to the board
+gauss_path_planner.generate_path(
         state=np.array([
             start_pos[0], start_pos[1], start_pos[2],
             0, 0, 0,
@@ -94,51 +119,75 @@ path_to_board.generate_path(
         plot=False
     )
 
-quat_path = []
-print('Converting euler path to quaternion path')
-for step in path_to_board.orientation_path:
-    quat_path.append(transform.quaternion_from_euler(
-        step[0], step[1], step[2], axes)
-    )
-quat_path = np.asarray(quat_path)
+pos_path = gauss_path_planner.position_path
+ori_path = gauss_path_planner.orientation_path
+writing_origin = np.copy(pos_path[-1])
 
-# generate the writing position path
-dmp = pydmps.dmp_discrete.DMPs_discrete(n_dmps=2, n_bfs=500, ay=np.ones(2) * 10)
-dmp.imitate_path(alphanum_path, plot=False)
-dmp_path = dmp.rollout(path_to_board.n_timesteps)[0]
+dmp2 = pydmps.dmp_discrete.DMPs_discrete(n_dmps=2, n_bfs=500, ay=np.ones(2) * 10)
+dmp3 = pydmps.dmp_discrete.DMPs_discrete(n_dmps=3, n_bfs=500, ay=np.ones(3) * 10)
 
-# add our last point on the way to the board since the dmp begins at the origin
-dmp_quat_path = []
-for ii in range(0, len(dmp_path)):
-    dmp_path[ii] += path_to_board.position_path[-1][0]
-    dmp_quat_path.append(target_quat)
+# use dmp to imitate our gauss planner
+dmp3.imitate_path(pos_path.T, plot=False)
+pos_path = dmp3.rollout(dmp_steps)[0]
+dmp3.imitate_path(ori_path.T, plot=False)
+ori_path = dmp3.rollout(dmp_steps)[0]
 
-dmp_path = np.asarray(dmp_path)
-dmp_quat_path = np.asarray(dmp_quat_path)
-print('dmp pos path: ', dmp_path.shape)
-print('dmp quat: ', dmp_quat_path.shape)
-print('pos path: ', path_to_board.position_path.shape)
-print('quat path shape: ', quat_path.shape)
-print((np.ones((path_to_board.n_timesteps, 1))*path_to_board.position_path[-1][2]).shape)
-dmp_path = np.hstack((dmp_path, np.ones((path_to_board.n_timesteps, 1))*path_to_board.position_path[-1][2]))
-print('dmp pos path: ', dmp_path.shape)
+for ii, char in enumerate(text):
+    # generate the writing position path
+    dmp2.imitate_path(text_paths[char], plot=False)
+    dmp_pos = dmp2.rollout(dmp_steps)[0]
 
-pos_path = np.vstack((path_to_board.position_path, dmp_path))
-quat_path = np.vstack((quat_path, np.ones((path_to_board.n_timesteps, 4))*target_quat))
-print('final pos path: ', pos_path.shape)
-print('final quat path: ', quat_path.shape)
+    # add our last point on the way to the board since the dmp begins at the origin
+    dmp_pos = np.asarray(dmp_pos)
+    dmp_pos = np.hstack((dmp_pos, np.ones((dmp_steps, 1))*writing_origin[2]))
+    dmp_pos[:, 0] += writing_origin[0]
+    dmp_pos[:, 1] += writing_origin[1]
+    dmp_ori = np.ones((dmp_steps, 3))*ori_path[-1]
+
+    # generate the path to the start of our letter
+    gauss_path_planner.generate_path(
+            state=np.array([
+                pos_path[-1][0], pos_path[-1][1], pos_path[-1][2],
+                0, 0, 0,
+                ori_path[-1][0], ori_path[-1][1], ori_path[-1][2],
+                0, 0, 0
+            ]),
+            target=np.array([
+                dmp_pos[0][0], dmp_pos[0][1], dmp_pos[0][2],
+                0, 0, 0,
+                dmp_ori[0][0], dmp_ori[0][1], dmp_ori[0][2],
+                0, 0, 0
+            ]),
+            start_v=0,
+            target_v=0,
+            plot=False
+        )
+
+    # use dmp to imitate our gauss planner
+    dmp3.imitate_path(gauss_path_planner.position_path.T, plot=False)
+    pos_path_to_next_letter = dmp3.rollout(dmp_steps)[0]
+    dmp3.imitate_path(gauss_path_planner.orientation_path.T, plot=False)
+    ori_path_to_next_letter = dmp3.rollout(dmp_steps)[0]
+
+    pos_path = np.vstack((pos_path, pos_path_to_next_letter))
+    ori_path = np.vstack((ori_path, ori_path_to_next_letter))
+
+    pos_path = np.vstack((pos_path, dmp_pos))
+    ori_path = np.vstack((ori_path, np.ones((dmp_steps, 3))*ori_path[-1]))
+
+    # shift the writing origin over in one dimension as we write
+    writing_origin[0] += letter_spacing
+
 
 # get the next point in the target trajectory from the dmp
-# target_xyz[0], target_xyz[1] = dmp.step(error * 1e2)[0]
-# target_xyz += np.array([0, 2, 0])
 print('Plotting 6dof path')
-control_utils.plot_path_from_quat(
-        # pos_path=path_to_board.position_path,
+control_utils.plot_6dof_path(
         pos_path=pos_path,
-        quat_path=quat_path,
+        ori_path=ori_path,
         global_start_heading=control_utils.local_to_global_heading(
             local_start_heading, T_EE),
-        sampling=20,
-        show_axes=False
-)
-
+        sampling=5,
+        show_axes=False,
+        axes=axes,
+        scale=10
+        )

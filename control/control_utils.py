@@ -1,5 +1,5 @@
 from mpl_toolkits.mplot3d import Axes3D
-from abr_control.utils import transformations as tform
+from abr_control.utils import transformations as transform
 import abr_jaco2
 import matplotlib.pyplot as plt
 import numpy as np
@@ -22,7 +22,7 @@ def get_target_quat(target_heading, start_heading):
         )
 
     # get quaternion from angle and axis
-    quat = tform.quaternion_about_axis(theta1, axis)
+    quat = transform.quaternion_about_axis(theta1, axis)
 
     return quat
 
@@ -36,7 +36,7 @@ def rot_vec_by_quat(vec, quat):
     quat /= np.linalg.norm(quat)
     # vec /= np.linalg.norm(vec)
     vec_quat = np.array([0, vec[0], vec[1], vec[2]])
-    new_vec = tform.quaternion_multiply(tform.quaternion_multiply(quat, vec_quat), tform.quaternion_conjugate(quat))
+    new_vec = transform.quaternion_multiply(transform.quaternion_multiply(quat, vec_quat), transform.quaternion_conjugate(quat))
 
     return new_vec[1:]
 
@@ -99,7 +99,7 @@ def local_to_global_heading(local_start_heading, transform=None):
     return global_start_heading
 
 
-def get_target_orientation(local_start_heading, global_target_heading, transform=None, plot=False):
+def get_target_orientation_from_heading(local_start_heading, global_target_heading, transform=None, plot=False):
     """
     Gets the target orientation to move a start heading in local coordinates to a target
     heading in world coordinates
@@ -128,12 +128,25 @@ def get_target_orientation(local_start_heading, global_target_heading, transform
     return quat
 
 
-def plot_path_from_quat(
-       pos_path, quat_path, global_start_heading, sampling=20, show_axes=False):
+def plot_6dof_path(
+       pos_path, ori_path, global_start_heading, axes, sampling=20, show_axes=False, scale=1):
     """
     Plots the path of the EE over time, but also adds the local reference frame and heading we are
     trying to align with a global heading
+
+    Parameters
+    ----------
+    scale: float
+        value to scale quiver plot arrow lengths
     """
+    quat_path = []
+    print('Converting euler path to quaternion path')
+    for step in ori_path:
+        quat_path.append(transform.quaternion_from_euler(
+            step[0], step[1], step[2], axes)
+        )
+    quat_path = np.asarray(quat_path)
+
     global_headings = []
     pos_path = np.asarray(pos_path).T
 
@@ -150,18 +163,18 @@ def plot_path_from_quat(
             pos_path[0][::sampling],
             pos_path[1][::sampling],
             pos_path[2][::sampling],
-            global_headings[0],
-            global_headings[1],
-            global_headings[2],
+            global_headings[0]/scale,
+            global_headings[1]/scale,
+            global_headings[2]/scale,
             color='tab:purple',
             label='local heading')
 
     if show_axes:
         axes = {'x': [1, 0, 0], 'y': [0, 1, 0], 'z': [0, 0, 1]}
         ax.quiver(
-                pos_path[0][::sampling],
-                pos_path[1][::sampling],
-                pos_path[2][::sampling],
+                pos_path[0][::sampling]/scale,
+                pos_path[1][::sampling]/scale,
+                pos_path[2][::sampling]/scale,
                 axes['x'][0],
                 axes['x'][1],
                 axes['x'][2],
@@ -170,9 +183,9 @@ def plot_path_from_quat(
                 label='x')
 
         ax.quiver(
-                pos_path[0][::sampling],
-                pos_path[1][::sampling],
-                pos_path[2][::sampling],
+                pos_path[0][::sampling]/scale,
+                pos_path[1][::sampling]/scale,
+                pos_path[2][::sampling]/scale,
                 axes['y'][0],
                 axes['y'][1],
                 axes['y'][2],
@@ -181,9 +194,9 @@ def plot_path_from_quat(
                 label='y')
 
         ax.quiver(
-                pos_path[0][::sampling],
-                pos_path[1][::sampling],
-                pos_path[2][::sampling],
+                pos_path[0][::sampling]/scale,
+                pos_path[1][::sampling]/scale,
+                pos_path[2][::sampling]/scale,
                 axes['z'][0],
                 axes['z'][1],
                 axes['z'][2],
@@ -191,14 +204,14 @@ def plot_path_from_quat(
                 linestyle='-',
                 label='z')
 
-    ax.set_xlim(-2, 2)
-    ax.set_ylim(-2, 2)
-    ax.set_zlim(0, 2)
+    # ax.set_xlim(-2, 2)
+    # ax.set_ylim(-2, 2)
+    # ax.set_zlim(0, 2)
     plt.legend()
     plt.show()
 
 
-def plot_path_from_q(
+def plot_6dof_path_from_q(
         q_track, local_start_heading, robot_config, sampling=20):
     """
     Plots the path of the EE over time, but also adds the local reference frame and heading we are

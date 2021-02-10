@@ -20,7 +20,7 @@ local_start_heading = [0, 0, 1]
 global_target_heading = [1, 0, 0]
 
 # get the quaternion orientation that will align our local z axis with the global x axis
-quat = utils.get_target_orientation(local_start_heading, global_target_heading, T_EE, plot=True)
+quat = utils.get_target_orientation_from_heading(local_start_heading, global_target_heading, T_EE, plot=True)
 
 interface.disconnect()
 
