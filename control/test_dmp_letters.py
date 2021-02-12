@@ -12,7 +12,7 @@ import pydmps
 import control_utils
 
 import matplotlib.pyplot as plt
-dt = 0.001
+dt = 0.0005
 np.set_printoptions(threshold=sys.maxsize)
 
 # load our alphanumerical path
@@ -26,7 +26,7 @@ char_size = [0.05, 0.05]
 # spacing between letters in meters
 letter_spacing = char_size[0] * 2
 # how many steps for each dmp path (currently all the same)
-dmp_steps = 2000
+# dmp_steps = 2000
 # for plotting to improve arrow visibility
 sampling = 5
 # location to go to for writing
@@ -64,22 +64,29 @@ def load_paths(text, save_loc=None, plot=False, char_size=None):
 
 text_paths = load_paths(text, plot=False, char_size=char_size)
 
-dmp2 = pydmps.dmp_discrete.DMPs_discrete(n_dmps=2, n_bfs=500, ay=np.ones(2) * 10) #, dt=dt)
+dmp2 = pydmps.dmp_discrete.DMPs_discrete(
+    n_dmps=2,
+    n_bfs=500,
+    ay=np.ones(2) * 10,
+    dt=dt
+)
+
+print('timesteps: ', dmp2.timesteps)
+
 # hard code the orientation for now while debugging
 ori_path = np.array([[1.57, 0, 0]])
 
 for ii, char in enumerate(text):
     # generate the writing position path
     dmp2.imitate_path(text_paths[char], plot=False)
-    dmp_pos = dmp2.rollout(dmp_steps)[0]
+    dmp_pos = dmp2.rollout()[0]
 
     # add our last point on the way to the board since the dmp begins at the origin
-    # print('dmp pos: ', dmp_pos)
     dmp_pos = np.asarray(dmp_pos)
-    plt.figure()
-    plt.title('DMP imitated alphanumeric path')
-    plt.plot(dmp_pos[:, 0], dmp_pos[:, 1])
-    plt.show()
+    # plt.figure()
+    # plt.title('DMP imitated alphanumeric path')
+    # plt.plot(dmp_pos[:, 0], dmp_pos[:, 1])
+    # plt.show()
 
     # write on xy plane
     # dmp_pos = np.hstack((dmp_pos, np.ones((dmp_steps, 1))*writing_origin[2]))
@@ -94,28 +101,29 @@ for ii, char in enumerate(text):
 
 
     # write on yz plane
-    dmp_pos = np.hstack((np.ones((dmp_steps, 1))*writing_origin[0], dmp_pos))
+    dmp_pos = np.hstack((np.ones((dmp_pos.shape[0], 1))*writing_origin[0], dmp_pos))
     # spacing along line
     max_horz_point = max(dmp_pos[:, 1])
     dmp_pos[:, 1] += writing_origin[1] # + max_horz_point
     # vertical alignment
     dmp_pos[:, 2] += writing_origin[2]
-    dmp_ori = np.ones((dmp_steps, 3))*ori_path[-1]
+    dmp_ori = np.ones((dmp_pos.shape[0], 3))*ori_path[-1]
     # shift the writing origin over in one dimension as we write
     writing_origin[1] += letter_spacing + max_horz_point
 
-    if ii == 0:
-        pos_path = np.copy(dmp_pos)
-        ori_path = np.copy(dmp_ori)
-        print('first pass')
-    else:
-        pos_path = np.vstack((np.copy(pos_path), np.copy(dmp_pos)))
-        ori_path = np.vstack((np.copy(ori_path), np.copy(np.ones((dmp_steps, 3))*ori_path[-1])))
-        print('subsequent pass')
-    print('pos_path shape: ', pos_path.shape)
+    # if ii == 0:
+    pos_path = np.copy(dmp_pos)
+    #     ori_path = np.copy(dmp_ori)
+    #     print('first pass')
+    # else:
+    #     pos_path = np.vstack((np.copy(pos_path), np.copy(dmp_pos)))
+    #     ori_path = np.vstack((np.copy(ori_path), np.copy(np.ones((dmp_steps, 3))*ori_path[-1])))
+    #     print('subsequent pass')
+    # print('pos_path shape: ', pos_path.shape)
 plt.figure()
 plt.title('Full DMP Path')
 plt.plot(pos_path[:, 1], pos_path[:, 2])
+# plt.plot(dmp2.goal[0], dmp2.goal[1], 'rx', mew=3)
 plt.show()
 
 # control_utils.plot_6dof_path(
