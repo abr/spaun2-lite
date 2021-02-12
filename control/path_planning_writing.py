@@ -19,11 +19,11 @@ import control_utils
 import matplotlib.pyplot as plt
 #TODO
 """
-1) scale dmp path to desired writing size
-2) arc path up between characters to avoid writing letter
+DONE 1) scale dmp path to desired writing size
+2) arc path up between characters to avoid writing between letters
 3) add checks to make sure we're not writing further than we can reach
-4) generalize writing to any plane
-5) add offset for pen distance
+DONE 4) add offset for pen distance
+5) generalize writing to any plane, including buffer offset direction
 """
 
 # load our alphanumerical path
@@ -32,14 +32,29 @@ if len(sys.argv) > 1:
 else:
     text = '1'
 
-axes = 'rxyz'                                   # for conversion between quat and euler
-local_start_heading = np.array([0, 0, 1])       # the direction in EE local coordinates that the pen tip is facing
-global_target_heading = np.array([0, 0, -1])    # the target direction in world coordinates to be writing
-target_pos = np.array([0.7, 0.5, 0.6])          # where to start writing on the plane defined by global_target_heading
-letter_spacing = 1                            # in meters
-dmp_steps = 100
+# for conversion between quat and euler
+axes = 'rxyz'
+# the direction in EE local coordinates that the pen tip is facing
+local_start_heading = np.array([0, 0, 1])
+# the target direction in world coordinates to be writing
+global_target_heading = np.array([0, 0, -1])
+# where to start writing on the plane defined by global_target_heading
+target_pos = np.array([-0.6, 0.0, 0.6])
+# character size [x, y] in meters
+char_size = [0.05, 0.05]
+# spacing between letters in meters
+letter_spacing = char_size[0] * 2
+# how many steps for each dmp path (currently all the same)
+dmp_steps = 2000
+# for plotting to improve arrow visibility
+sampling = 20
+# length of writing instrument in meters, assumed to be aligned with local_start_heading
+pen_buffer = [0, 0, 0.1]
 
-def load_paths(text, save_loc=None, plot=False):
+def load_paths(text, save_loc=None, plot=False, char_size=None):
+    if char_size is None:
+        char_size = [1, 1]
+
     print('Loading alphanumerical path')
     if save_loc is None:
         save_loc = 'handwriting_trajectories'
@@ -49,17 +64,23 @@ def load_paths(text, save_loc=None, plot=False):
         if char not in text_paths.keys():
             char_save_loc = '%s/%s.npz' % (save_loc, char)
             char_path = np.load(char_save_loc)['arr_0'].T
+            # scale our characters to be size 1m x 1m
+            # then apply the user defined char size scaling
+            char_path[0, :] *= (2 * char_size[0])
+            char_path[1, :] *= (0.5 * char_size[1])
             text_paths[char] = char_path
 
             if plot:
                 plt.figure()
                 plt.plot(char_path[0], char_path[1], label='char')
                 plt.legend()
+                plt.xlim(-0.25, 0.2)
+                plt.ylim(-0.25, 0.2)
                 plt.show()
 
     return text_paths
 
-text_paths = load_paths(text, plot=False)
+text_paths = load_paths(text, plot=False, char_size=char_size)
 
 # instantiate robot config and comm interface
 print('Connecting to arm and interface')
@@ -87,7 +108,7 @@ target_quat = control_utils.get_target_orientation_from_heading(
 target_euler = transform.euler_from_quaternion(target_quat, axes)
 
 # get our start EE position and quat orientation
-start_pos = robot_config.Tx('EE', q_start)
+start_pos = robot_config.Tx('EE', q_start, x=pen_buffer)
 start_quat = robot_config.quaternion('EE', q_start)
 start_euler = transform.euler_from_quaternion(start_quat, axes)
 
@@ -140,7 +161,10 @@ for ii, char in enumerate(text):
     # add our last point on the way to the board since the dmp begins at the origin
     dmp_pos = np.asarray(dmp_pos)
     dmp_pos = np.hstack((dmp_pos, np.ones((dmp_steps, 1))*writing_origin[2]))
-    dmp_pos[:, 0] += writing_origin[0]
+    # spacing along line
+    max_horz_point = max(dmp_pos[:, 0])
+    dmp_pos[:, 0] += writing_origin[0] # + max_horz_point
+    # vertical alignment
     dmp_pos[:, 1] += writing_origin[1]
     dmp_ori = np.ones((dmp_steps, 3))*ori_path[-1]
 
@@ -166,8 +190,10 @@ for ii, char in enumerate(text):
     # use dmp to imitate our gauss planner
     dmp3.imitate_path(gauss_path_planner.position_path.T, plot=False)
     pos_path_to_next_letter = dmp3.rollout(dmp_steps)[0]
+    # pos_path_to_next_letter = gauss_path_planner.position_path
     dmp3.imitate_path(gauss_path_planner.orientation_path.T, plot=False)
     ori_path_to_next_letter = dmp3.rollout(dmp_steps)[0]
+    # ori_path_to_next_letter = gauss_path_planner.orientation_path
 
     pos_path = np.vstack((pos_path, pos_path_to_next_letter))
     ori_path = np.vstack((ori_path, ori_path_to_next_letter))
@@ -176,18 +202,94 @@ for ii, char in enumerate(text):
     ori_path = np.vstack((ori_path, np.ones((dmp_steps, 3))*ori_path[-1]))
 
     # shift the writing origin over in one dimension as we write
-    writing_origin[0] += letter_spacing
+    writing_origin[0] += letter_spacing + max_horz_point
 
 
-# get the next point in the target trajectory from the dmp
-print('Plotting 6dof path')
-control_utils.plot_6dof_path(
-        pos_path=pos_path,
-        ori_path=ori_path,
-        global_start_heading=control_utils.local_to_global_heading(
-            local_start_heading, T_EE),
-        sampling=5,
-        show_axes=False,
-        axes=axes,
-        scale=10
-        )
+# add offset to account for pen length
+# pos_path[:, 2] += pen_buffer
+
+ee_track = []
+q_track = []
+
+# create opreational space controller
+ctrlr_dof = [True, True, True, False, False, False]
+damping = Damping(robot_config, kv=10)
+ctrlr = OSC(robot_config, kp=50, ko=200, kv=20, null_controllers=[damping],
+            vmax=None, #vmax=[10, 10],  # [m/s, rad/s]
+            # control (x, y, beta, gamma) out of [x, y, z, alpha, beta, gamma]
+            ctrlr_dof=ctrlr_dof)
+
+
+interface.connect()
+interface.init_position_mode()
+interface.send_target_angles(robot_config.START_ANGLES)
+interface.init_force_mode()
+
+try:
+    for ii in range(0, pos_path.shape[0]):
+        # get arm feedback
+        feedback = interface.get_feedback()
+        hand_xyz = robot_config.Tx('EE', feedback['q'], x=pen_buffer)
+
+        target = np.hstack((pos_path[ii], ori_path[ii]))
+
+        u = ctrlr.generate(
+            q=feedback['q'],
+            dq=feedback['dq'],
+            target=target,
+            # target_vel=np.hstack([vel, np.zeros(3)])
+            )
+
+        # apply the control signal, step the sim forward
+        interface.send_forces(np.array(u, dtype='float32'))
+
+        # track data
+        ee_track.append(np.copy(hand_xyz))
+        q_track.append(np.copy(feedback['q']))
+
+finally:
+    interface.init_position_mode()
+    interface.send_target_angles(robot_config.START_ANGLES)
+    interface.disconnect()
+    np.savez_compressed('arm_results.npz', q=q_track, ee=ee_track)
+
+    # get the next point in the target trajectory from the dmp
+    print('Plotting 6dof path')
+    fig = plt.figure()
+    ax = fig.gca(projection='3d')
+    ax = control_utils.plot_6dof_path(
+            pos_path=pos_path,
+            ori_path=ori_path,
+            global_start_heading=control_utils.local_to_global_heading(
+                local_start_heading, T_EE),
+            sampling=sampling,
+            show_axes=False,
+            axes=axes,
+            scale=10,
+            # ax=None,
+            # show=True
+            ax=ax,
+            show=False
+    )
+    # plt.show()
+
+    control_utils.plot_6dof_path_from_q(
+            q_track=q_track,
+            local_start_heading=local_start_heading,
+            robot_config=robot_config,
+            sampling=sampling,
+            # ax=None,
+            ax=ax,
+            show=True,
+            show_axes=False
+    )
+    # plt.show()
+
+    fig = plt.figure()
+    ax = fig.gca(projection='3d')
+    ee_track = np.asarray(ee_track)
+    ax.plot(pos_path[:, 0], pos_path[:, 1], pos_path[:, 2], c='b')
+    ax.plot(ee_track[:, 0], ee_track[:, 1], ee_track[:, 2], c='g')
+    plt.show()
+
+

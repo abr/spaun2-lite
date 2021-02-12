@@ -129,7 +129,7 @@ def get_target_orientation_from_heading(local_start_heading, global_target_headi
 
 
 def plot_6dof_path(
-       pos_path, ori_path, global_start_heading, axes, sampling=20, show_axes=False, scale=1):
+       pos_path, ori_path, global_start_heading, axes, sampling=20, show_axes=False, scale=1, ax=None, show=True):
     """
     Plots the path of the EE over time, but also adds the local reference frame and heading we are
     trying to align with a global heading
@@ -156,8 +156,10 @@ def plot_6dof_path(
 
     global_headings = np.asarray(global_headings).T[:, ::sampling]
 
-    fig = plt.figure()
-    ax = fig.gca(projection='3d')
+    if ax is None:
+        fig = plt.figure()
+        ax = fig.gca(projection='3d')
+
     ax.scatter(pos_path[0], pos_path[1], pos_path[2], color='k', label='path')
     ax.quiver(
             pos_path[0][::sampling],
@@ -204,15 +206,24 @@ def plot_6dof_path(
                 linestyle='-',
                 label='z')
 
-    # ax.set_xlim(-2, 2)
-    # ax.set_ylim(-2, 2)
-    # ax.set_zlim(0, 2)
+    # ax.set_xlim(0.65, 0.75)
+    # ax.set_ylim(0.45, 0.55)
+    # ax.set_zlim(0.5, 0.7)
     plt.legend()
-    plt.show()
+
+    if show:
+        plt.show()
+    else:
+        return ax
+
+    # fig = plt.figure()
+    # plt.scatter(pos_path[0], pos_path[1], color='k', label='path')
+    # plt.show()
+
 
 
 def plot_6dof_path_from_q(
-        q_track, local_start_heading, robot_config, sampling=20):
+        q_track, local_start_heading, robot_config, sampling=20, show_axes=True, ax=None, show=True):
     """
     Plots the path of the EE over time, but also adds the local reference frame and heading we are
     trying to align with a global heading
@@ -246,8 +257,10 @@ def plot_6dof_path_from_q(
     local_axes['z'] = np.asarray(local_axes['z']).T
     global_headings = np.asarray(global_headings).T
 
-    fig = plt.figure()
-    ax = fig.gca(projection='3d')
+    if ax is None:
+        fig = plt.figure()
+        ax = fig.gca(projection='3d')
+
     ax.scatter(
             pos_path[0],
             pos_path[1],
@@ -265,44 +278,49 @@ def plot_6dof_path_from_q(
             color='tab:purple',
             label='local heading')
 
-    ax.quiver(
-            pos_path[0][::sampling],
-            pos_path[1][::sampling],
-            pos_path[2][::sampling],
-            local_axes['x'][0],
-            local_axes['x'][1],
-            local_axes['x'][2],
-            color='r',
-            linestyle='-',
-            label='local x')
+    if show_axes:
+        ax.quiver(
+                pos_path[0][::sampling],
+                pos_path[1][::sampling],
+                pos_path[2][::sampling],
+                local_axes['x'][0],
+                local_axes['x'][1],
+                local_axes['x'][2],
+                color='r',
+                linestyle='-',
+                label='local x')
 
-    ax.quiver(
-            pos_path[0][::sampling],
-            pos_path[1][::sampling],
-            pos_path[2][::sampling],
-            local_axes['y'][0],
-            local_axes['y'][1],
-            local_axes['y'][2],
-            color='g',
-            linestyle='-',
-            label='local y')
+        ax.quiver(
+                pos_path[0][::sampling],
+                pos_path[1][::sampling],
+                pos_path[2][::sampling],
+                local_axes['y'][0],
+                local_axes['y'][1],
+                local_axes['y'][2],
+                color='g',
+                linestyle='-',
+                label='local y')
 
-    ax.quiver(
-            pos_path[0][::sampling],
-            pos_path[1][::sampling],
-            pos_path[2][::sampling],
-            local_axes['z'][0],
-            local_axes['z'][1],
-            local_axes['z'][2],
-            color='b',
-            linestyle='-',
-            label='local z')
+        ax.quiver(
+                pos_path[0][::sampling],
+                pos_path[1][::sampling],
+                pos_path[2][::sampling],
+                local_axes['z'][0],
+                local_axes['z'][1],
+                local_axes['z'][2],
+                color='b',
+                linestyle='-',
+                label='local z')
 
     ax.set_xlim(-2, 2)
     ax.set_ylim(-2, 2)
     ax.set_zlim(0, 2)
     plt.legend()
-    plt.show()
+
+    if show:
+        plt.show()
+    else:
+        return ax
 
 # def generate_path_to_surface(start_state, target_pos, approach_heading, local_heading_to_align, approach_offset=0):
 #     """
