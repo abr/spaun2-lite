@@ -15,6 +15,7 @@ from abr_control.controllers import OSC, Damping
 from abr_control.utils import transformations as transform
 from gauss_path_planner import GaussianPathPlanner
 import control_utils
+from abr_analyze import DataHandler
 
 import matplotlib.pyplot as plt
 #TODO
@@ -25,6 +26,15 @@ DONE 1) scale dmp path to desired writing size
 DONE 4) add offset for pen distance
 5) generalize writing to any plane, including buffer offset direction
 """
+
+dt = 0.001
+# np.set_printoptions(threshold=sys.maxsize)
+
+kp = 200
+kv = 14
+ko = 150
+ctrlr_dof = [True, True, True, True, True, False]
+save_loc = 'kp=%i|kv=%i|ko=%i|dof=%i' % (kp, kv, ko, int(np.sum(ctrlr_dof)))
 
 # load our alphanumerical path
 if len(sys.argv) > 1:
@@ -37,19 +47,20 @@ axes = 'rxyz'
 # the direction in EE local coordinates that the pen tip is facing
 local_start_heading = np.array([0, 0, 1])
 # the target direction in world coordinates to be writing
-global_target_heading = np.array([0, 0, -1])
+global_target_heading = np.array([-1, 0, 0])
+# writing instrument offset from EE in EE coodrinates
+pen_buffer = [0, 0, 0]
+# pen_buffer = [0, 0, 0.06]
 # where to start writing on the plane defined by global_target_heading
-target_pos = np.array([-0.6, 0.0, 0.6])
+target_pos = np.array([-0.6, 0.0, 0.44])
 # character size [x, y] in meters
 char_size = [0.05, 0.05]
 # spacing between letters in meters
-letter_spacing = char_size[0] * 2
+letter_spacing = char_size[0]
 # how many steps for each dmp path (currently all the same)
 dmp_steps = 2000
 # for plotting to improve arrow visibility
 sampling = 20
-# length of writing instrument in meters, assumed to be aligned with local_start_heading
-pen_buffer = [0, 0, 0.1]
 
 def load_paths(text, save_loc=None, plot=False, char_size=None):
     if char_size is None:
@@ -66,7 +77,7 @@ def load_paths(text, save_loc=None, plot=False, char_size=None):
             char_path = np.load(char_save_loc)['arr_0'].T
             # scale our characters to be size 1m x 1m
             # then apply the user defined char size scaling
-            char_path[0, :] *= (2 * char_size[0])
+            char_path[0, :] *= (0.5 * char_size[0])
             char_path[1, :] *= (0.5 * char_size[1])
             text_paths[char] = char_path
 
@@ -74,8 +85,8 @@ def load_paths(text, save_loc=None, plot=False, char_size=None):
                 plt.figure()
                 plt.plot(char_path[0], char_path[1], label='char')
                 plt.legend()
-                plt.xlim(-0.25, 0.2)
-                plt.ylim(-0.25, 0.2)
+                # plt.xlim(-0.25, 0.2)
+                # plt.ylim(-0.25, 0.2)
                 plt.show()
 
     return text_paths
@@ -144,29 +155,51 @@ pos_path = gauss_path_planner.position_path
 ori_path = gauss_path_planner.orientation_path
 writing_origin = np.copy(pos_path[-1])
 
-dmp2 = pydmps.dmp_discrete.DMPs_discrete(n_dmps=2, n_bfs=500, ay=np.ones(2) * 10)
-dmp3 = pydmps.dmp_discrete.DMPs_discrete(n_dmps=3, n_bfs=500, ay=np.ones(3) * 10)
+dmp2 = pydmps.dmp_discrete.DMPs_discrete(n_dmps=2, n_bfs=500, ay=np.ones(2) * 10, dt=dt)
+dmp3 = pydmps.dmp_discrete.DMPs_discrete(n_dmps=3, n_bfs=500, ay=np.ones(3) * 10, dt=dt)
 
 # use dmp to imitate our gauss planner
-dmp3.imitate_path(pos_path.T, plot=False)
-pos_path = dmp3.rollout(dmp_steps)[0]
-dmp3.imitate_path(ori_path.T, plot=False)
-ori_path = dmp3.rollout(dmp_steps)[0]
+# dmp3.imitate_path(pos_path.T, plot=False)
+# pos_path = dmp3.rollout(dmp_steps)[0]
+# dmp3.imitate_path(ori_path.T, plot=False)
+# ori_path = dmp3.rollout(dmp_steps)[0]
 
 for ii, char in enumerate(text):
     # generate the writing position path
     dmp2.imitate_path(text_paths[char], plot=False)
-    dmp_pos = dmp2.rollout(dmp_steps)[0]
+    dmp_pos = dmp2.rollout()[0]
+    dmp_steps = len(dmp_pos)
 
     # add our last point on the way to the board since the dmp begins at the origin
+    # print('dmp pos: ', dmp_pos)
     dmp_pos = np.asarray(dmp_pos)
-    dmp_pos = np.hstack((dmp_pos, np.ones((dmp_steps, 1))*writing_origin[2]))
+    # plt.figure()
+    # plt.plot(dmp_pos[:, 0], dmp_pos[:, 1])
+    # plt.show()
+
+    # write on xy plane
+    # dmp_pos = np.hstack((dmp_pos, np.ones((dmp_steps, 1))*writing_origin[2]))
+    # # spacing along line
+    # max_horz_point = max(dmp_pos[:, 0])
+    # dmp_pos[:, 0] += writing_origin[0] # + max_horz_point
+    # # vertical alignment
+    # dmp_pos[:, 1] += writing_origin[1]
+    # dmp_ori = np.ones((dmp_steps, 3))*ori_path[-1]
+    # # shift the writing origin over in one dimension as we write
+    # writing_origin[0] += letter_spacing + max_horz_point
+
+
+    # write on yz plane
+    dmp_pos = np.hstack((np.ones((dmp_steps, 1))*writing_origin[0], dmp_pos))
     # spacing along line
-    max_horz_point = max(dmp_pos[:, 0])
-    dmp_pos[:, 0] += writing_origin[0] # + max_horz_point
+    max_horz_point = max(dmp_pos[:, 1])
+    dmp_pos[:, 1] += writing_origin[1] # + max_horz_point
     # vertical alignment
-    dmp_pos[:, 1] += writing_origin[1]
+    dmp_pos[:, 2] += writing_origin[2]
     dmp_ori = np.ones((dmp_steps, 3))*ori_path[-1]
+    # shift the writing origin over in one dimension as we write
+    writing_origin[1] += letter_spacing + max_horz_point
+
 
     # generate the path to the start of our letter
     gauss_path_planner.generate_path(
@@ -188,12 +221,13 @@ for ii, char in enumerate(text):
         )
 
     # use dmp to imitate our gauss planner
-    dmp3.imitate_path(gauss_path_planner.position_path.T, plot=False)
-    pos_path_to_next_letter = dmp3.rollout(dmp_steps)[0]
-    # pos_path_to_next_letter = gauss_path_planner.position_path
-    dmp3.imitate_path(gauss_path_planner.orientation_path.T, plot=False)
-    ori_path_to_next_letter = dmp3.rollout(dmp_steps)[0]
-    # ori_path_to_next_letter = gauss_path_planner.orientation_path
+    # dmp3.imitate_path(gauss_path_planner.position_path.T, plot=False)
+    # pos_path_to_next_letter = dmp3.rollout(dmp_steps)[0]
+    pos_path_to_next_letter = gauss_path_planner.position_path
+    pos_path_to_next_letter[:, 0] += 0.01
+    # dmp3.imitate_path(gauss_path_planner.orientation_path.T, plot=False)
+    # ori_path_to_next_letter = dmp3.rollout(dmp_steps)[0]
+    ori_path_to_next_letter = gauss_path_planner.orientation_path
 
     pos_path = np.vstack((pos_path, pos_path_to_next_letter))
     ori_path = np.vstack((ori_path, ori_path_to_next_letter))
@@ -201,20 +235,57 @@ for ii, char in enumerate(text):
     pos_path = np.vstack((pos_path, dmp_pos))
     ori_path = np.vstack((ori_path, np.ones((dmp_steps, 3))*ori_path[-1]))
 
-    # shift the writing origin over in one dimension as we write
-    writing_origin[0] += letter_spacing + max_horz_point
+gauss_path_planner.generate_path(
+        state=np.array([
+            pos_path[-1][0], pos_path[-1][1], pos_path[-1][2],
+            0, 0, 0,
+            ori_path[-1][0], ori_path[-1][1], ori_path[-1][2],
+            0, 0, 0
+        ]),
+        target=np.array([
+            pos_path[-1][0]+0.1, pos_path[-1][1], pos_path[-1][2],
+            0, 0, 0,
+            ori_path[-1][0], ori_path[-1][1], ori_path[-1][2],
+            0, 0, 0
+        ]),
+        start_v=0,
+        target_v=0,
+        plot=False
+    )
+
+# use dmp to imitate our gauss planner
+# dmp3.imitate_path(gauss_path_planner.position_path.T, plot=False)
+# pos_path_to_next_letter = dmp3.rollout(dmp_steps)[0]
+pos_path_to_next_letter = gauss_path_planner.position_path
+# dmp3.imitate_path(gauss_path_planner.orientation_path.T, plot=False)
+# ori_path_to_next_letter = dmp3.rollout(dmp_steps)[0]
+ori_path_to_next_letter = gauss_path_planner.orientation_path
+
+pos_path = np.vstack((pos_path, pos_path_to_next_letter))
+ori_path = np.vstack((ori_path, ori_path_to_next_letter))
 
 
-# add offset to account for pen length
-# pos_path[:, 2] += pen_buffer
+# control_utils.plot_6dof_path(
+#             pos_path=pos_path,
+#             ori_path=ori_path,
+#             global_start_heading=control_utils.local_to_global_heading(
+#                 local_start_heading, T_EE),
+#             sampling=sampling,
+#             show_axes=False,
+#             axes=axes,
+#             scale=10,
+#             ax=None,
+#             show=True
+#             # ax=ax,
+#             # show=False
+#     )
 
 ee_track = []
 q_track = []
 
 # create opreational space controller
-ctrlr_dof = [True, True, True, False, False, False]
 damping = Damping(robot_config, kv=10)
-ctrlr = OSC(robot_config, kp=50, ko=200, kv=20, null_controllers=[damping],
+ctrlr = OSC(robot_config, kp=kp, ko=ko, kv=kv, null_controllers=[damping],
             vmax=None, #vmax=[10, 10],  # [m/s, rad/s]
             # control (x, y, beta, gamma) out of [x, y, z, alpha, beta, gamma]
             ctrlr_dof=ctrlr_dof)
@@ -237,6 +308,7 @@ try:
             q=feedback['q'],
             dq=feedback['dq'],
             target=target,
+            xyz_offset=pen_buffer
             # target_vel=np.hstack([vel, np.zeros(3)])
             )
 
@@ -251,7 +323,7 @@ finally:
     interface.init_position_mode()
     interface.send_target_angles(robot_config.START_ANGLES)
     interface.disconnect()
-    np.savez_compressed('arm_results.npz', q=q_track, ee=ee_track)
+    # np.savez_compressed('arm_results.npz', q=q_track, ee=ee_track)
 
     # get the next point in the target trajectory from the dmp
     print('Plotting 6dof path')
@@ -288,8 +360,33 @@ finally:
     fig = plt.figure()
     ax = fig.gca(projection='3d')
     ee_track = np.asarray(ee_track)
-    ax.plot(pos_path[:, 0], pos_path[:, 1], pos_path[:, 2], c='b')
-    ax.plot(ee_track[:, 0], ee_track[:, 1], ee_track[:, 2], c='g')
+    ax.plot(pos_path[:, 0], pos_path[:, 1], pos_path[:, 2], c='b', label='path_planner')
+    ax.plot(ee_track[:, 0], ee_track[:, 1], ee_track[:, 2], c='g', label='ee_trajectory')
+    plt.legend()
     plt.show()
 
+data = {}
+data['pos_err'], data['ori_err'] = control_utils.calc_error(
+    q_track=q_track,
+    pos_path=pos_path,
+    ori_path=ori_path,
+    robot_config=robot_config,
+    axes=axes,
+    offset=pen_buffer)
 
+dat = DataHandler('writing_gain_tuning')
+save_loc = 'pos_err=%.2f|ori_err=%.2f|' % (np.sum(data['pos_err']), np.sum(data['ori_err'])) + save_loc
+save_loc = '%s/%s' % (text, save_loc)
+dat.save(data, save_loc, overwrite=True)
+
+plt.figure()
+plt.title('Error')
+plt.subplot(211)
+plt.title('Position Error')
+plt.plot(data['pos_err'], label='%.2f' % np.sum(data['pos_err']))
+plt.legend()
+plt.subplot(212)
+plt.title('Orientation Error')
+plt.plot(data['ori_err'], label='%.2f' % np.sum(data['ori_err']))
+plt.legend()
+plt.show()

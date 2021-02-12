@@ -322,6 +322,26 @@ def plot_6dof_path_from_q(
     else:
         return ax
 
+def calc_error(q_track, pos_path, ori_path, robot_config, axes, offset=None):
+    if offset is None:
+        offset = np.zeros(3)
+
+    pos_err = []
+    ori_err = []
+
+    for ii, q in enumerate(q_track):
+        ee_pos = robot_config.Tx('EE', q, x=offset)
+        ee_quat = robot_config.quaternion('EE', q)
+        ee_euler = transform.euler_from_quaternion(ee_quat, axes)
+
+        pos_err.append(np.linalg.norm(ee_pos - pos_path[ii]))
+        ori_err.append(np.linalg.norm(ee_euler - ori_path[ii]))
+
+    pos_err = np.array(pos_err)
+    ori_err = np.array(ori_err)
+
+    return pos_err, ori_err
+
 # def generate_path_to_surface(start_state, target_pos, approach_heading, local_heading_to_align, approach_offset=0):
 #     """
 #     Generates a gaussian path to a surface, given a location on the surface to approach
