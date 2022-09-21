@@ -266,26 +266,26 @@ try:
             if target['action'] == 'pickup':
                 # open before reaching pickup position
                 open_gripper = 1
-            elif target['action'] == 'dropoff':
-                # do nothing
-                open_gripper = -1
+            # elif target['action'] == 'dropoff':
+            #     # do nothing
+            #     open_gripper = -1
 
-            # WAYPOINT 2: maintain position and open/maintain gripper depending
-            # on if picking up or dropping off, respectively
-            target['seq'].append(
-                np.array(
-                    [[
-                        target['seq'][-1][-1][0],
-                        target['seq'][-1][-1][1],
-                        target['seq'][-1][-1][2],
-                        target['seq'][-1][-1][3],
-                        target['seq'][-1][-1][4],
-                        target['seq'][-1][-1][5],
-                        open_gripper
-                    ]] * grip_steps
+                # WAYPOINT 2: maintain position and open/maintain gripper depending
+                # on if picking up or dropping off, respectively
+                target['seq'].append(
+                    np.array(
+                        [[
+                            target['seq'][-1][-1][0],
+                            target['seq'][-1][-1][1],
+                            target['seq'][-1][-1][2],
+                            target['seq'][-1][-1][3],
+                            target['seq'][-1][-1][4],
+                            target['seq'][-1][-1][5],
+                            open_gripper
+                        ]] * grip_steps
+                    )
                 )
-            )
-            # print(len(target['seq']))
+                # print(len(target['seq']))
 
             # WAYPOINT 3: move up buffer dist to pickup/dropoff loc
             path_planner_linear.generate_path(
@@ -340,7 +340,8 @@ try:
                     ]] * grip_steps
                 )
             )
-            # back off from pickup/dropoff
+
+            # WAYPOINT 5: back up buffer dist and maintain gripper
             path_planner_linear.generate_path(
                     state=np.array([
                         # last seq, last step, dim x, y, z (0, 1, 2)
@@ -361,15 +362,15 @@ try:
                     autoadjust_av=True
                 )
 
-            if target['action'] == 'pickup':
-                # backing off, keep gripper closed (do nothing)
-                open_gripper = -1
-            elif target['action'] == 'dropoff':
-                # backing off, close gripper
-                open_gripper = 0
+            # if target['action'] == 'pickup':
+            #     # backing off, keep gripper closed (do nothing)
+            #     open_gripper = -1
+            # elif target['action'] == 'dropoff':
+            #     # backing off, close gripper
+            #     open_gripper = 0
+            open_gripper = -1
 
 
-            # WAYPOINT 5: back up buffer dist and maintain gripper
             target['seq'].append(
                 np.hstack((
                     path_planner_linear.position_path,
@@ -379,6 +380,22 @@ try:
             )
             # print(len(target['seq']))
 
+            # WAYPOINT 6: if we just dropped something off, close the hand
+            # now that we've backed off
+            if target['action'] == 'dropoff':
+                target['seq'].append(
+                    np.array(
+                        [[
+                            target['seq'][-1][-1][0],
+                            target['seq'][-1][-1][1],
+                            target['seq'][-1][-1][2],
+                            target['seq'][-1][-1][3],
+                            target['seq'][-1][-1][4],
+                            target['seq'][-1][-1][5],
+                            0
+                        ]] * grip_steps
+                    )
+                )
 
             print('LEN SEQ: ', len(target['seq']))
             print('SHAPES')
@@ -594,6 +611,19 @@ try:
                         u_grip = [0, 0, 0]
 
                     interface.send_forces(np.hstack((u, u_grip)))
+
+                    # visualization for debugging
+                    target_geom_id = interface.sim.model.geom_name2id("target")
+                    green = [0, 0.9, 0, 0.5]
+                    red = [0.9, 0, 0, 0.5]
+                    if u_grip[0] > 0:
+                        interface.set_mocap_xyz("target", [0.0, 0, 1.2])
+                        interface.sim.model.geom_rgba[target_geom_id] = green
+                    elif u_grip[0] < 0:
+                        interface.set_mocap_xyz("target", [0.0, 0, 1.2])
+                        interface.sim.model.geom_rgba[target_geom_id] = red
+                    else:
+                        interface.set_mocap_xyz("target", [0, 0, -1.2])
 
                     interface.set_mocap_xyz("target_orientation", seq[ii][:3])
                     interface.set_mocap_orientation(
