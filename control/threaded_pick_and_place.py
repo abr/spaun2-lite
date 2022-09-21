@@ -493,6 +493,8 @@ try:
         else:
             gen_path(target, np.copy(feedback['q']))
 
+        # for proper visualization of gripper in mujoco
+        last_grip = None
         print(f"TARGET: {target['name']}")
         for seq_count, seq in enumerate(target['seq']):
             print(f"SEQ: {seq_count}")
@@ -603,12 +605,23 @@ try:
                     uf = 4
                     if seq[ii][-1] == 1:
                         u_grip = [uf, uf, uf]
+                        last_grip = u_grip
                         # print('opening hand')
                     elif seq[ii][-1] == 0:
                         u_grip = [-uf, -uf, -uf]
+                        last_grip = u_grip
                         # print('closing hand')
                     else:
-                        u_grip = [0, 0, 0]
+                        if last_grip is None:
+                            # first target, so leave gripper as is
+                            u_grip = [0, 0, 0]
+                        else:
+                            # require open / close force to maintain
+                            # hand position, the real jaco's hand works
+                            # in position mode, so just use the last
+                            # non-zero gripper force to maintain the correct
+                            # open or close position
+                            u_grip = last_grip
 
                     interface.send_forces(np.hstack((u, u_grip)))
 
@@ -619,9 +632,11 @@ try:
                     if u_grip[0] > 0:
                         interface.set_mocap_xyz("target", [0.0, 0, 1.2])
                         interface.sim.model.geom_rgba[target_geom_id] = green
+                        last_grip = u_grip
                     elif u_grip[0] < 0:
                         interface.set_mocap_xyz("target", [0.0, 0, 1.2])
                         interface.sim.model.geom_rgba[target_geom_id] = red
+                        last_grip = u_grip
                     else:
                         interface.set_mocap_xyz("target", [0, 0, -1.2])
 
