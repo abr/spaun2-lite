@@ -26,11 +26,12 @@ DONE 1) scale dmp path to desired writing size
 DONE 4) add offset for pen distance
 5) generalize writing to any plane, including buffer offset direction
 """
+plot = False
 
 dt = 0.001
 # np.set_printoptions(threshold=sys.maxsize)
 
-kp = 200
+kp = 100
 kv = 14
 ko = 150
 ctrlr_dof = [True, True, True, True, True, False]
@@ -52,15 +53,19 @@ global_target_heading = np.array([-1, 0, 0])
 pen_buffer = [0, 0, 0]
 # pen_buffer = [0, 0, 0.06]
 # where to start writing on the plane defined by global_target_heading
-target_pos = np.array([-0.6, 0.0, 0.44])
+# target_pos = np.array([-0.6, 0.0, 0.44])
+target_pos = np.array([-0.62, -0.15, 0.44])
 # character size [x, y] in meters
 char_size = [0.05, 0.05]
+# char_size = [0.025, 0.025]
 # spacing between letters in meters
-letter_spacing = char_size[0]
+letter_spacing = char_size[0]/2
 # how many steps for each dmp path (currently all the same)
 dmp_steps = 2000
 # for plotting to improve arrow visibility
-sampling = 20
+sampling = 25
+# distance to back away from plane between letters
+backup_buffer = np.array([-0.1, 0, 0])
 
 def load_paths(text, save_loc=None, plot=False, char_size=None):
     if char_size is None:
@@ -141,7 +146,7 @@ gauss_path_planner.generate_path(
             0, 0, 0
         ]),
         target=np.array([
-            target_pos[0], target_pos[1], target_pos[2],
+            target_pos[0]-backup_buffer[0], target_pos[1]-backup_buffer[1], target_pos[2]-backup_buffer[2],
             0, 0, 0,
             target_euler[0], target_euler[1], target_euler[2],
             0, 0, 0
@@ -153,7 +158,7 @@ gauss_path_planner.generate_path(
 
 pos_path = gauss_path_planner.position_path
 ori_path = gauss_path_planner.orientation_path
-writing_origin = np.copy(pos_path[-1])
+writing_origin = np.copy(pos_path[-1]) + backup_buffer
 
 dmp2 = pydmps.dmp_discrete.DMPs_discrete(n_dmps=2, n_bfs=500, ay=np.ones(2) * 10, dt=dt)
 dmp3 = pydmps.dmp_discrete.DMPs_discrete(n_dmps=3, n_bfs=500, ay=np.ones(3) * 10, dt=dt)
@@ -217,14 +222,14 @@ for ii, char in enumerate(text):
             ]),
             start_v=0,
             target_v=0,
-            plot=False
         )
 
     # use dmp to imitate our gauss planner
     # dmp3.imitate_path(gauss_path_planner.position_path.T, plot=False)
     # pos_path_to_next_letter = dmp3.rollout(dmp_steps)[0]
     pos_path_to_next_letter = gauss_path_planner.position_path
-    pos_path_to_next_letter[:, 0] += 0.01
+    # Add offset to back up from board
+    # pos_path_to_next_letter[:, 0] += 0.02
     # dmp3.imitate_path(gauss_path_planner.orientation_path.T, plot=False)
     # ori_path_to_next_letter = dmp3.rollout(dmp_steps)[0]
     ori_path_to_next_letter = gauss_path_planner.orientation_path
@@ -234,6 +239,29 @@ for ii, char in enumerate(text):
 
     pos_path = np.vstack((pos_path, dmp_pos))
     ori_path = np.vstack((ori_path, np.ones((dmp_steps, 3))*ori_path[-1]))
+
+    # backup to move over to next letter
+    gauss_path_planner.generate_path(
+            state=np.array([
+                pos_path[-1][0], pos_path[-1][1], pos_path[-1][2],
+                0, 0, 0,
+                ori_path[-1][0], ori_path[-1][1], ori_path[-1][2],
+                0, 0, 0
+            ]),
+            target=np.array([
+                pos_path[-1][0]-backup_buffer[0], pos_path[-1][1]-backup_buffer[1], pos_path[-1][2]-backup_buffer[2],
+                0, 0, 0,
+                ori_path[-1][0], ori_path[-1][1], ori_path[-1][2],
+                0, 0, 0
+            ]),
+            start_v=0,
+            target_v=0,
+            plot=False
+        )
+
+    pos_path = np.vstack((pos_path, gauss_path_planner.position_path))
+    ori_path = np.vstack((ori_path, gauss_path_planner.orientation_path))
+
 
 gauss_path_planner.generate_path(
         state=np.array([
@@ -325,68 +353,70 @@ finally:
     interface.disconnect()
     # np.savez_compressed('arm_results.npz', q=q_track, ee=ee_track)
 
-    # get the next point in the target trajectory from the dmp
-    print('Plotting 6dof path')
-    fig = plt.figure()
-    ax = fig.gca(projection='3d')
-    ax = control_utils.plot_6dof_path(
-            pos_path=pos_path,
-            ori_path=ori_path,
-            global_start_heading=control_utils.local_to_global_heading(
-                local_start_heading, T_EE),
-            sampling=sampling,
-            show_axes=False,
-            axes=axes,
-            scale=10,
-            # ax=None,
-            # show=True
-            ax=ax,
-            show=False
-    )
-    # plt.show()
+    if plot:
+        # get the next point in the target trajectory from the dmp
+        print('Plotting 6dof path')
+        fig = plt.figure()
+        ax = fig.gca(projection='3d')
+        # ax = control_utils.plot_6dof_path(
+        #         pos_path=pos_path,
+        #         ori_path=ori_path,
+        #         global_start_heading=control_utils.local_to_global_heading(
+        #             local_start_heading, T_EE),
+        #         sampling=sampling,
+        #         show_axes=False,
+        #         axes=axes,
+        #         scale=10,
+        #         # ax=None,
+        #         # show=True
+        #         ax=ax,
+        #         show=False
+        # )
+        # plt.show()
 
-    control_utils.plot_6dof_path_from_q(
-            q_track=q_track,
-            local_start_heading=local_start_heading,
-            robot_config=robot_config,
-            sampling=sampling,
-            # ax=None,
-            ax=ax,
-            show=True,
-            show_axes=False
-    )
-    # plt.show()
+        control_utils.plot_6dof_path_from_q(
+                q_track=q_track,
+                local_start_heading=local_start_heading,
+                robot_config=robot_config,
+                sampling=sampling,
+                # ax=None,
+                ax=ax,
+                show=True,
+                show_axes=True
+        )
+        # plt.show()
 
-    fig = plt.figure()
-    ax = fig.gca(projection='3d')
-    ee_track = np.asarray(ee_track)
-    ax.plot(pos_path[:, 0], pos_path[:, 1], pos_path[:, 2], c='b', label='path_planner')
-    ax.plot(ee_track[:, 0], ee_track[:, 1], ee_track[:, 2], c='g', label='ee_trajectory')
-    plt.legend()
-    plt.show()
+        fig = plt.figure()
+        ax = fig.gca(projection='3d')
+        ee_track = np.asarray(ee_track)
+        ax.plot(pos_path[:, 0], pos_path[:, 1], pos_path[:, 2], c='b', label='path_planner')
+        ax.plot(ee_track[:, 0], ee_track[:, 1], ee_track[:, 2], c='g', label='ee_trajectory')
+        plt.legend()
+        plt.show()
 
-data = {}
-data['pos_err'], data['ori_err'] = control_utils.calc_error(
-    q_track=q_track,
-    pos_path=pos_path,
-    ori_path=ori_path,
-    robot_config=robot_config,
-    axes=axes,
-    offset=pen_buffer)
+    data = {}
+    data['pos_err'], data['ori_err'] = control_utils.calc_error(
+        q_track=q_track,
+        pos_path=pos_path,
+        ori_path=ori_path,
+        robot_config=robot_config,
+        axes=axes,
+        offset=pen_buffer)
 
-dat = DataHandler('writing_gain_tuning')
-save_loc = 'pos_err=%.2f|ori_err=%.2f|' % (np.sum(data['pos_err']), np.sum(data['ori_err'])) + save_loc
-save_loc = '%s/%s' % (text, save_loc)
-dat.save(data, save_loc, overwrite=True)
+    dat = DataHandler('writing_gain_tuning')
+    save_loc = 'pos_err=%.2f|ori_err=%.2f|' % (np.sum(data['pos_err']), np.sum(data['ori_err'])) + save_loc
+    save_loc = '%s/%s' % (text, save_loc)
+    dat.save(data, save_loc, overwrite=True)
 
-plt.figure()
-plt.title('Error')
-plt.subplot(211)
-plt.title('Position Error')
-plt.plot(data['pos_err'], label='%.2f' % np.sum(data['pos_err']))
-plt.legend()
-plt.subplot(212)
-plt.title('Orientation Error')
-plt.plot(data['ori_err'], label='%.2f' % np.sum(data['ori_err']))
-plt.legend()
-plt.show()
+    if plot:
+        plt.figure()
+        plt.title('Error')
+        plt.subplot(211)
+        plt.title('Position Error')
+        plt.plot(data['pos_err'], label='%.2f' % np.sum(data['pos_err']))
+        plt.legend()
+        plt.subplot(212)
+        plt.title('Orientation Error')
+        plt.plot(data['ori_err'], label='%.2f' % np.sum(data['ori_err']))
+        plt.legend()
+        plt.show()
