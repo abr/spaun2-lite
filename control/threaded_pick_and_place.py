@@ -17,6 +17,7 @@ from abr_control.controllers import OSC, Damping, signals, RestingConfig
 from abr_control.utils import transformations as transform
 from gauss_path_planner import GaussianPathPlanner
 from circle_path_planner import CirclePathPlanner
+from arc import Arc as ArcPathPlanner
 import control_utils
 from abr_analyze import DataHandler
 
@@ -160,7 +161,7 @@ try:
 
         # get our path to the writing start position
         print(f"Generating path to {target['name']}")
-        path_planner = GaussianPathPlanner(
+        path_planner_linear = GaussianPathPlanner(
                     max_a=1,
                     max_v=1,
                     dt=0.001,
@@ -173,39 +174,93 @@ try:
         #             axes=axes
         #     )
 
-        # generate the path to next target - buffer
-        path_planner.generate_path(
-                state=np.array([
-                    start_pos[0], start_pos[1], start_pos[2],
-                    0, 0, 0,
-                    start_euler[0], start_euler[1], start_euler[2],
-                    0, 0, 0
-                ]),
-                target=np.array([
-                    target['pos'][0]-approach_vector[0], target['pos'][1]-approach_vector[1], target['pos'][2]-approach_vector[2],
-                    0, 0, 0,
-                    target_euler[0], target_euler[1], target_euler[2],
-                    0, 0, 0
-                ]),
-                start_v=0,
-                target_v=0,
-                plot=plot,
-                autoadjust_av=True
+        path_planner_arc = ArcPathPlanner(
+            n_timesteps=3000
+        )
+
+        # WAYPOINT 1: generate the path to next target - buffer
+        #====ARC PATH
+        target_position=[target['pos'][0]-approach_vector[0], target['pos'][1]-approach_vector[1], target['pos'][2]-approach_vector[2]]
+
+        pos_path, vel_path = path_planner_arc.generate_path(
+            position=[start_pos[0], start_pos[1], start_pos[2]],
+            target_position=target_position
+        )
+
+        # get orientation path, this is done in the gauss pp, but not in arc
+        error = []
+        dist = np.linalg.norm(start_pos-target_position)
+
+        for ee in pos_path:
+            error.append(np.sqrt(np.sum((pos_path[-1] - ee) ** 2)))
+        error /= dist
+        error = 1 - error
+
+        orientation_path = []
+        quat0 = transform.quaternion_from_euler(
+            start_euler[0],
+            start_euler[1],
+            start_euler[2],
+            axes='rxyz')
+
+        quat1 = transform.quaternion_from_euler(
+            target_euler[0],
+            target_euler[1],
+            target_euler[2],
+            axes='rxyz')
+
+        for step in error:
+            quat = transform.quaternion_slerp(
+                quat0=quat0,
+                quat1=quat1,
+                fraction=step
             )
-        # target['path'] = np.hstack((path_planner.position_path, path_planner.orientation_path))
+            orientation_path.append(
+                    transform.euler_from_quaternion(
+                        quat,
+                        axes='rxyz'
+                    )
+            )
+
+        orientation_path = np.asarray(orientation_path)
+
         target['seq'].append(
             np.hstack((
-                path_planner.position_path,
-                path_planner.orientation_path,
-                np.array([-1]*len(path_planner.position_path))[:, np.newaxis]
+                pos_path,
+                orientation_path,
+                np.array([-1]*len(pos_path))[:, np.newaxis]
             ))
         )
-        print(len(target['seq']))
-        # print(f"FIRST TARGET PATH SHAPE: ", target['path'].shape)
-        # target['open_gripper'] = [None]*len(target['path'])
-        # target['gripper_seq'].append(np.array([None]*len(target['seq'][-1]))
-        # print("GRIPPER PATH: ", np.asarray(target['open_gripper']).shape)
 
+        #====LINEAR PATH
+        # path_planner_linear.generate_path(
+        #         state=np.array([
+        #             start_pos[0], start_pos[1], start_pos[2],
+        #             0, 0, 0,
+        #             start_euler[0], start_euler[1], start_euler[2],
+        #             0, 0, 0
+        #         ]),
+        #         target=np.array([
+        #             target['pos'][0]-approach_vector[0], target['pos'][1]-approach_vector[1], target['pos'][2]-approach_vector[2],
+        #             0, 0, 0,
+        #             target_euler[0], target_euler[1], target_euler[2],
+        #             0, 0, 0
+        #         ]),
+        #         start_v=0,
+        #         target_v=0,
+        #         plot=plot,
+        #         autoadjust_av=True
+        #     )
+        # target['seq'].append(
+        #     np.hstack((
+        #         path_planner_linear.position_path,
+        #         path_planner_linear.orientation_path,
+        #         np.array([-1]*len(path_planner_linear.position_path))[:, np.newaxis]
+        #     ))
+        # )
+
+        # If just reaching to a point, end here
+        # if pickup or dropoff, then break down into parts
         if target['action'] != 'reach':
             # open_gripper = None
             if target['action'] == 'pickup':
@@ -215,6 +270,8 @@ try:
                 # do nothing
                 open_gripper = -1
 
+            # WAYPOINT 2: maintain position and open/maintain gripper depending
+            # on if picking up or dropping off, respectively
             target['seq'].append(
                 np.array(
                     [[
@@ -228,8 +285,10 @@ try:
                     ]] * grip_steps
                 )
             )
-            print(len(target['seq']))
-            path_planner.generate_path(
+            # print(len(target['seq']))
+
+            # WAYPOINT 3: move up buffer dist to pickup/dropoff loc
+            path_planner_linear.generate_path(
                     state=np.array([
                         # last seq, last step, dim x, y, z (0, 1, 2)
                         target['seq'][-1][-1][0], target['seq'][-1][-1][1], target['seq'][-1][-1][2],
@@ -248,14 +307,15 @@ try:
                     plot=plot,
                     autoadjust_av=True
                 )
+
             target['seq'].append(
                 np.hstack((
-                    path_planner.position_path,
-                    path_planner.orientation_path,
-                    np.array([-1]*len(path_planner.position_path))[:, np.newaxis]
+                    path_planner_linear.position_path,
+                    path_planner_linear.orientation_path,
+                    np.array([-1]*len(path_planner_linear.position_path))[:, np.newaxis]
                 ))
             )
-            print(len(target['seq']))
+            # print(len(target['seq']))
 
             if target['action'] == 'pickup':
                 # at target, close gripper
@@ -265,6 +325,8 @@ try:
                 open_gripper = 1
 
 
+            # WAYPOINT 4: open/close hand and maintain position depending on whether
+            # dropping off or picking up, respectively
             target['seq'].append(
                 np.array(
                     [[
@@ -279,7 +341,7 @@ try:
                 )
             )
             # back off from pickup/dropoff
-            path_planner.generate_path(
+            path_planner_linear.generate_path(
                     state=np.array([
                         # last seq, last step, dim x, y, z (0, 1, 2)
                         target['seq'][-1][-1][0], target['seq'][-1][-1][1], target['seq'][-1][-1][2],
@@ -307,21 +369,23 @@ try:
                 open_gripper = 0
 
 
+            # WAYPOINT 5: back up buffer dist and maintain gripper
             target['seq'].append(
                 np.hstack((
-                    path_planner.position_path,
-                    path_planner.orientation_path,
-                    np.array([open_gripper]*len(path_planner.position_path))[:, np.newaxis]
+                    path_planner_linear.position_path,
+                    path_planner_linear.orientation_path,
+                    np.array([open_gripper]*len(path_planner_linear.position_path))[:, np.newaxis]
                 ))
             )
-            print(len(target['seq']))
+            # print(len(target['seq']))
 
 
             print('LEN SEQ: ', len(target['seq']))
             print('SHAPES')
             for s in target['seq']:
                 print(s.shape)
-
+            # Now we are backed away from the pickup/drop off location and
+            # can proceed to the next target
 
     # create opreational space controller
     damping = Damping(robot_config, kv=10)
