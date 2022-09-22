@@ -24,16 +24,32 @@ from abr_analyze import DataHandler
 import matplotlib.pyplot as plt
 """
 """
-sim = True
+sim = False
+plot = False
+
 if 'plot' in sys.argv:
     plot = True
-else:
-    plot = False
+if 'sim' in sys.argv:
+    sim = True
+
+dt = 0.001
+error_thres = 0.035
+target_error_count = 200 # number of steps to maintain sub error_thres error level
+grip_steps = 200
+kp = 100
+# kp = 50
+# kv = None
+ko = None
+kv = 7
+# ko = 400
+ko = 200
+axes = 'rxyz'
+
 if sim:
     from abr_control.arms.mujoco_config import MujocoConfig
     from abr_control.interfaces.mujoco import Mujoco
     robot_config = MujocoConfig("jaco2")
-    interface = Mujoco(robot_config, dt=0.001)
+    interface = Mujoco(robot_config, dt=dt)
 else:
     import abr_jaco2
     robot_config = abr_jaco2.Config()
@@ -42,27 +58,38 @@ else:
 targets = [
     {
         'name': 'jar',
-        # 'pos': np.array([-0.62, -0.15, 0.65]),
-        'pos': np.array([0.1, -0.82, 0.54]),
+        'pos': np.array([0.1, -0.82, 0.60]),
         'action': 'pickup', # reach with buffer, open, reach, close, back up
-        # 'global_target_heading': np.array([-1, 0, 0]),
         'global_target_heading': np.array([0, -1, 0]),
+        'path': {
+            'type': 'arc',
+            'kwargs': {'n_timesteps': 4000},
+        },
     },
     {
         'name': 'shelf',
-        'pos': np.array([0.82, 0.0, 0.72]),
+        'pos': np.array([0.75, 0.0, 0.7]),
         'action': 'dropoff',
-        # 'pos': np.array([0, -0.62, 0.40]),
-        # 'global_target_heading': np.array([0, -1, 0]),
         'global_target_heading': np.array([1, 0, 0]),
+        'path': {
+            'type': 'arc',
+            'kwargs': {'n_timesteps': 1000},
+        },
     },
     {
         'name': 'home',
         'pos': np.array([0.0, 0.0, 0.9]),
         'action': 'reach',
-        # 'pos': np.array([0, -0.62, 0.40]),
-        # 'global_target_heading': np.array([0, -1, 0]),
         'global_target_heading': np.array([0, 0, 0]),
+        'path': {
+            'type': 'linear',
+            'kwargs': {
+                'max_a': 1,
+                'max_v': 1,
+                'dt': dt,
+                'axes': axes
+            },
+        },
     }
 
 ]
@@ -72,18 +99,6 @@ if sim:
         # real arm is slightly above ground due to mount
         target['pos'] -= np.array([0, 0, 0.1])
 
-dt = 0.001
-error_thres = 0.035
-target_error_count = 1000 # number of steps to maintain sub error_thres error level
-grip_steps = 200
-# np.set_printoptions(threshold=sys.maxsize)
-
-# kp = 100
-kp = 50
-# kv = None
-ko = None
-kv = 7
-ko = 400
 # ctrlr_dof = [True, True, True, True, True, False]
 # ctrlr_dof = [True, True, True, False, False, True]
 # ctrlr_dof = [True, True, True, False, True, True]
@@ -93,7 +108,6 @@ ko = 400
 save_loc = 'test'
 
 # for conversion between quat and euler
-axes = 'rxyz'
 # the direction in EE local coordinates that the pen tip is facing
 local_start_heading = np.array([0, 0, 1])
 # writing instrument offset from EE in EE coodrinates
@@ -145,7 +159,8 @@ try:
             target_euler = [0, -np.pi/2, np.pi]
         # pickup along y
         elif target['global_target_heading'][1] == 1:
-            target_euler = [-np.pi/2, 0, np.pi/2]
+            # target_euler = [-np.pi/2, 0, np.pi/2]
+            target_euler = [-np.pi/2, 0, -np.pi/2]
         # pickup along -y
         elif target['global_target_heading'][1] == -1:
             target_euler = [np.pi/2, 0, -np.pi/2]
@@ -161,12 +176,6 @@ try:
 
         # get our path to the writing start position
         print(f"Generating path to {target['name']}")
-        path_planner_linear = GaussianPathPlanner(
-                    max_a=1,
-                    max_v=1,
-                    dt=0.001,
-                    axes=axes
-            )
         # path_planner = CirclePathPlanner(
         #             max_a=1,
         #             max_v=1,
@@ -174,90 +183,106 @@ try:
         #             axes=axes
         #     )
 
-        path_planner_arc = ArcPathPlanner(
-            n_timesteps=3000
-        )
-
         # WAYPOINT 1: generate the path to next target - buffer
         #====ARC PATH
-        target_position=[target['pos'][0]-approach_vector[0], target['pos'][1]-approach_vector[1], target['pos'][2]-approach_vector[2]]
-
-        pos_path, vel_path = path_planner_arc.generate_path(
-            position=[start_pos[0], start_pos[1], start_pos[2]],
-            target_position=target_position
-        )
-
-        # get orientation path, this is done in the gauss pp, but not in arc
-        error = []
-        dist = np.linalg.norm(start_pos-target_position)
-
-        for ee in pos_path:
-            error.append(np.sqrt(np.sum((pos_path[-1] - ee) ** 2)))
-        error /= dist
-        error = 1 - error
-
-        orientation_path = []
-        quat0 = transform.quaternion_from_euler(
-            start_euler[0],
-            start_euler[1],
-            start_euler[2],
-            axes='rxyz')
-
-        quat1 = transform.quaternion_from_euler(
-            target_euler[0],
-            target_euler[1],
-            target_euler[2],
-            axes='rxyz')
-
-        for step in error:
-            quat = transform.quaternion_slerp(
-                quat0=quat0,
-                quat1=quat1,
-                fraction=step
-            )
-            orientation_path.append(
-                    transform.euler_from_quaternion(
-                        quat,
-                        axes='rxyz'
-                    )
+        if target['path']['type'] == 'arc':
+            path_planner_arc = ArcPathPlanner(
+                # n_timesteps=arc_steps
+                **target['path']['kwargs']
             )
 
-        orientation_path = np.asarray(orientation_path)
+            target_position=[target['pos'][0]-approach_vector[0], target['pos'][1]-approach_vector[1], target['pos'][2]-approach_vector[2]]
 
-        target['seq'].append(
-            np.hstack((
-                pos_path,
-                orientation_path,
-                np.array([-1]*len(pos_path))[:, np.newaxis]
-            ))
-        )
+            pos_path, vel_path = path_planner_arc.generate_path(
+                position=[start_pos[0], start_pos[1], start_pos[2]],
+                target_position=target_position
+            )
 
-        #====LINEAR PATH
-        # path_planner_linear.generate_path(
-        #         state=np.array([
-        #             start_pos[0], start_pos[1], start_pos[2],
-        #             0, 0, 0,
-        #             start_euler[0], start_euler[1], start_euler[2],
-        #             0, 0, 0
-        #         ]),
-        #         target=np.array([
-        #             target['pos'][0]-approach_vector[0], target['pos'][1]-approach_vector[1], target['pos'][2]-approach_vector[2],
-        #             0, 0, 0,
-        #             target_euler[0], target_euler[1], target_euler[2],
-        #             0, 0, 0
-        #         ]),
-        #         start_v=0,
-        #         target_v=0,
-        #         plot=plot,
-        #         autoadjust_av=True
-        #     )
-        # target['seq'].append(
-        #     np.hstack((
-        #         path_planner_linear.position_path,
-        #         path_planner_linear.orientation_path,
-        #         np.array([-1]*len(path_planner_linear.position_path))[:, np.newaxis]
-        #     ))
-        # )
+            # get orientation path, this is done in the gauss pp, but not in arc
+            error = []
+            dist = np.linalg.norm(start_pos-target_position)
+
+            for ee in pos_path:
+                error.append(np.sqrt(np.sum((pos_path[-1] - ee) ** 2)))
+            error /= dist
+            error = 1 - error
+
+            orientation_path = []
+            quat0 = transform.quaternion_from_euler(
+                start_euler[0],
+                start_euler[1],
+                start_euler[2],
+                axes=axes)
+
+            quat1 = transform.quaternion_from_euler(
+                target_euler[0],
+                target_euler[1],
+                target_euler[2],
+                axes=axes)
+
+            for step in error:
+                quat = transform.quaternion_slerp(
+                    quat0=quat0,
+                    quat1=quat1,
+                    fraction=step
+                )
+                orientation_path.append(
+                        transform.euler_from_quaternion(
+                            quat,
+                            axes=axes
+                        )
+                )
+
+            orientation_path = np.asarray(orientation_path)
+
+            target['seq'].append(
+                np.hstack((
+                    pos_path,
+                    orientation_path,
+                    np.array([-1]*len(pos_path))[:, np.newaxis]
+                ))
+            )
+            # need this for the approach, grasp/dropoff, backup
+            path_planner_linear = GaussianPathPlanner(
+                max_v=1,
+                max_a=1,
+                dt=dt,
+                axes=axes
+            )
+
+        elif target['path']['type'] == 'linear':
+            #====LINEAR PATH
+            path_planner_linear = GaussianPathPlanner(
+                **target['path']['kwargs']
+            )
+
+            path_planner_linear.generate_path(
+                    state=np.array([
+                        start_pos[0], start_pos[1], start_pos[2],
+                        0, 0, 0,
+                        start_euler[0], start_euler[1], start_euler[2],
+                        0, 0, 0
+                    ]),
+                    target=np.array([
+                        target['pos'][0]-approach_vector[0], target['pos'][1]-approach_vector[1], target['pos'][2]-approach_vector[2],
+                        0, 0, 0,
+                        target_euler[0], target_euler[1], target_euler[2],
+                        0, 0, 0
+                    ]),
+                    start_v=0,
+                    target_v=0,
+                    plot=plot,
+                    autoadjust_av=True
+                )
+            target['seq'].append(
+                np.hstack((
+                    path_planner_linear.position_path,
+                    path_planner_linear.orientation_path,
+                    np.array([-1]*len(path_planner_linear.position_path))[:, np.newaxis]
+                ))
+            )
+        else:
+            raise ValueError(f"{target['path']['type']} is not a valid path planner")
 
         # If just reaching to a point, end here
         # if pickup or dropoff, then break down into parts
@@ -410,27 +435,16 @@ try:
         robot_config,
         rest_angles=[None, 3.14, None, None, None, None]
     )
-    # ctrlr = OSC(robot_config, kp=kp, ko=ko, kv=kv, null_controllers=[damping],
-    #             vmax=None, #vmax=[10, 10],  # [m/s, rad/s]
-    #             # control (x, y, beta, gamma) out of [x, y, z, alpha, beta, gamma]
-    #             ctrlr_dof=ctrlr_dof)
     ctrlr_pos = OSC(robot_config, kp=25, ko=0, kv=5, null_controllers=[damping],
-    # ctrlr_pos = OSC(robot_config, kp=25, ko=0, kv=5, null_controllers=[resting],
-                vmax=None, #vmax=[10, 10],  # [m/s, rad/s]
-                # control (x, y, beta, gamma) out of [x, y, z, alpha, beta, gamma]
+                vmax=None,
                 ctrlr_dof=[True, True, True, False, False, False])
 
     ctrlrx = OSC(robot_config, kp=kp, ko=ko, kv=kv, null_controllers=[damping],
-    # ctrlrx = OSC(robot_config, kp=kp, ko=ko, kv=kv, null_controllers=[resting],
-                vmax=None, #vmax=[10, 10],  # [m/s, rad/s]
-                # control (x, y, beta, gamma) out of [x, y, z, alpha, beta, gamma]
+                vmax=None,
                 ctrlr_dof=[True, True, True, True, False, True])
     ctrlry = OSC(robot_config, kp=kp, ko=ko, kv=kv, null_controllers=[damping],
-    # ctrlry = OSC(robot_config, kp=kp, ko=ko, kv=kv, null_controllers=[resting],
-                vmax=None, #vmax=[10, 10],  # [m/s, rad/s]
-                # control (x, y, beta, gamma) out of [x, y, z, alpha, beta, gamma]
+                vmax=None,
                 ctrlr_dof=[True, True, True, False, True, True])
-                # ctrlr_dof=[False, False, False, True, True, True])
 
 
 
@@ -506,11 +520,11 @@ try:
             # Last dim is gripper command
             # if not None, then run loop for the number of steps
             # it takes to open/close the gripper
-            at_count = target_error_count
-            # if seq[max(0, ii)][-1] is None:
-            #     at_count = target_error_count
-            # else:
-            #     at_count = grip_steps
+            # at_count = target_error_count
+            if seq[-1][-1] == -1:
+                at_count = target_error_count
+            else:
+                at_count = grip_steps
             exit = False
 
             while at_error_count < at_count:
@@ -523,8 +537,6 @@ try:
                 print_cnt += 1
                 ii += 1
                 # print('ii: ', ii)
-                # print('shape: ', target['path'].shape[0])
-                # ii = min(ii, target['path'].shape[0]-1)
                 ii = min(ii, seq.shape[0]-1)
                 # get arm feedback
                 feedback = interface.get_feedback()
@@ -538,7 +550,7 @@ try:
 
                 if print_cnt % 1000 == 0:
                     hand_abg = transform.euler_from_matrix(
-                        robot_config.R("EE", feedback["q"]), axes="rxyz"
+                        robot_config.R("EE", feedback["q"]), axes=axes
                     )
                     print(f"pos error: {error}")
                     # print(hand_xyz-target['pos'])
@@ -647,7 +659,7 @@ try:
                             seq[ii][3],
                             seq[ii][4],
                             seq[ii][5],
-                            axes='rxyz'
+                            axes=axes
                         )
                     )
                 # track data

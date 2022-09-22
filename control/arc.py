@@ -12,7 +12,7 @@ import numpy as np
 
 
 class Arc():#PathPlanner):
-    def __init__(self, n_timesteps=3000):
+    def __init__(self, n_timesteps=3000, **kwargs):
         """
         PARAMETERS
         ----------

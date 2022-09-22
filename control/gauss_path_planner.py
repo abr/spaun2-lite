@@ -10,7 +10,7 @@ from abr_control.utils import transformations as transform
 # class NewPathPlanner(path_planners.path_planner.PathPlanner):
 class GaussianPathPlanner():
 
-    def __init__(self, max_a, max_v, dt, axes='rxyz'):
+    def __init__(self, max_a, max_v, dt, axes='rxyz', **kwargs):
             # n_timesteps, dt, startup_steps=None, NED=False, axes='rxyz'):
         """
         NED: boolean, Optional (Default: False)
