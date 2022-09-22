@@ -7,6 +7,7 @@ To install the pydmps library, clone https://github.com/studywolf/pydmps
 and run 'python setup.py develop'
 """
 import traceback
+import time
 import numpy as np
 import sys
 import pydmps
@@ -40,15 +41,15 @@ if 'adapt' in sys.argv:
     use_adapt = True
 
 dt = 0.001
-error_thres = 0.035
-target_error_count = 500 # number of steps to maintain sub error_thres error level
-grip_steps = 200
-# kp = 100
-kp = 50
-# kv = None
-ko = None
-kv = 7
-ko = 170
+error_thres = 0.04
+target_error_count = 400 # number of steps to maintain sub error_thres error level
+grip_steps = 220
+# kp = 50
+# kv = 7
+# ko = 170
+kp = 30
+kv = 5
+ko = 102
 # ko = 200
 axes = 'rxyz'
 # for conversion between quat and euler
@@ -57,9 +58,10 @@ local_start_heading = np.array([0, 0, 1])
 # writing instrument offset from EE in EE coodrinates
 approach_dist = 0.15
 # for plotting to improve arrow visibility
-sampling = 25
+# sampling = 25
 # steps after path planner reaches end to allow for controller to catch up
-step_limit=2000
+step_limit=4000
+learning_rate=2.5e-5
 
 # rotate base wrt config default
 START_ANGLES = np.array(
@@ -80,7 +82,7 @@ else:
 targets = [
     {
         'name': 'jar',
-        'pos': np.array([0.1, -0.82, 0.64]),
+        'pos': np.array([0.1, -0.82, 0.62]),
         'action': 'pickup', # reach with buffer, open, reach, close, back up
         'global_target_heading': np.array([0, -1, 0]),
         'path': {
@@ -91,6 +93,26 @@ targets = [
     {
         'name': 'shelf',
         'pos': np.array([0.75, 0.0, 0.73]),
+        'action': 'dropoff',
+        'global_target_heading': np.array([1, 0, 0]),
+        'path': {
+            'type': 'arc',
+            'kwargs': {'n_timesteps': 1000},
+        },
+    },
+    {
+        'name': 'jar',
+        'pos': np.array([-0.1, -0.82, 0.62]),
+        'action': 'pickup', # reach with buffer, open, reach, close, back up
+        'global_target_heading': np.array([0, -1, 0]),
+        'path': {
+            'type': 'arc',
+            'kwargs': {'n_timesteps': 2000},
+        },
+    },
+    {
+        'name': 'shelf',
+        'pos': np.array([0.75, 0.2, 0.73]),
         'action': 'dropoff',
         'global_target_heading': np.array([1, 0, 0]),
         'path': {
@@ -166,7 +188,7 @@ try:
 
         # pickup along x
         if target['global_target_heading'][0] == 1:
-            target_euler = [-0.35, np.pi/2, 0]
+            target_euler = [-0.3, np.pi/2, 0]
         # pickup along -x
         elif target['global_target_heading'][0] == -1:
             target_euler = [0, -np.pi/2, np.pi]
@@ -472,7 +494,7 @@ try:
             n_ensembles=1,
             n_input=3,  # we apply adaptation on the most heavily stressed joints
             n_output=3,
-            pes_learning_rate=1e-4,
+            pes_learning_rate=learning_rate,
             means=[3.14, 3.14, 3.14],
             variances=[3.14, 3.14, 3.14],
             spherical=True,
@@ -565,9 +587,6 @@ try:
                 if ii > seq.shape[0]-1:
                     ii = seq.shape[0]-1
                     step_limit_cnt += 1
-                    if step_limit_cnt > step_limit:
-                        print(f"{colors.red}REACHED STEP LIMIT{colors.endc}")
-                        break
 
                 # get arm feedback
                 feedback = interface.get_feedback()
@@ -582,6 +601,11 @@ try:
                     at_error_count += 1
                 else:
                     at_error_count = 0
+
+                if step_limit_cnt > step_limit:
+                    print(f"{colors.red}REACHED STEP LIMIT{colors.endc}")
+                    at_error_count = at_count + 1
+
 
                 if print_cnt % 1000 == 0:
                     hand_abg = transform.euler_from_matrix(
@@ -643,12 +667,15 @@ try:
                 # if seq[ii][-1] != -1:
                 #     interface.open_hand(seq[ii][-1])
                 if not sim:
-                    if seq[ii][-1] == 1:
-                        interface.open_hand(True)
-                        # print('opening hand')
-                    elif seq[ii][-1] == 0:
-                        # print('closing hand')
-                        interface.open_hand(False)
+                    if step_limit_cnt == 0:
+                        if seq[ii][-1] == 1:
+                            interface.open_hand(True)
+                            # print('opening hand')
+                            # time.sleep(dt)
+                        elif seq[ii][-1] == 0:
+                            # print('closing hand')
+                            interface.open_hand(False)
+                            # time.sleep(dt)
 
                     # apply the control signal, step the sim forward
                     interface.send_forces(np.array(u, dtype='float32'))

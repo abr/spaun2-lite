@@ -254,7 +254,7 @@ for ii, char in enumerate(text):
                 ori_path[-1][0], ori_path[-1][1], ori_path[-1][2],
                 0, 0, 0
             ]),
-            start_v=0,
+            start_v=4,
             target_v=0,
             plot=False
         )
