@@ -20,30 +20,52 @@ from circle_path_planner import CirclePathPlanner
 from arc import Arc as ArcPathPlanner
 import control_utils
 from abr_analyze import DataHandler
+from abr_control.utils import colors
 
 import matplotlib.pyplot as plt
 """
 """
 sim = False
 plot = False
+track_data = False
+use_adapt = False
 
 if 'plot' in sys.argv:
     plot = True
 if 'sim' in sys.argv:
     sim = True
+if 'track' in sys.argv:
+    track_data = True
+if 'adapt' in sys.argv:
+    use_adapt = True
 
 dt = 0.001
 error_thres = 0.035
-target_error_count = 200 # number of steps to maintain sub error_thres error level
+target_error_count = 500 # number of steps to maintain sub error_thres error level
 grip_steps = 200
-kp = 100
-# kp = 50
+# kp = 100
+kp = 50
 # kv = None
 ko = None
 kv = 7
-# ko = 400
-ko = 200
+ko = 170
+# ko = 200
 axes = 'rxyz'
+# for conversion between quat and euler
+# the direction in EE local coordinates that the pen tip is facing
+local_start_heading = np.array([0, 0, 1])
+# writing instrument offset from EE in EE coodrinates
+approach_dist = 0.15
+# for plotting to improve arrow visibility
+sampling = 25
+# steps after path planner reaches end to allow for controller to catch up
+step_limit=2000
+
+# rotate base wrt config default
+START_ANGLES = np.array(
+    # [4.81, 2.79, 2.62, 4.71, 0.0, 3.04], dtype="float32"
+    [6, 2.79, 2.62, 4.71, 0.0, 3.04], dtype="float32"
+)
 
 if sim:
     from abr_control.arms.mujoco_config import MujocoConfig
@@ -58,17 +80,17 @@ else:
 targets = [
     {
         'name': 'jar',
-        'pos': np.array([0.1, -0.82, 0.60]),
+        'pos': np.array([0.1, -0.82, 0.64]),
         'action': 'pickup', # reach with buffer, open, reach, close, back up
         'global_target_heading': np.array([0, -1, 0]),
         'path': {
             'type': 'arc',
-            'kwargs': {'n_timesteps': 4000},
+            'kwargs': {'n_timesteps': 2000},
         },
     },
     {
         'name': 'shelf',
-        'pos': np.array([0.75, 0.0, 0.7]),
+        'pos': np.array([0.75, 0.0, 0.73]),
         'action': 'dropoff',
         'global_target_heading': np.array([1, 0, 0]),
         'path': {
@@ -99,30 +121,18 @@ if sim:
         # real arm is slightly above ground due to mount
         target['pos'] -= np.array([0, 0, 0.1])
 
-# ctrlr_dof = [True, True, True, True, True, False]
-# ctrlr_dof = [True, True, True, False, False, True]
-# ctrlr_dof = [True, True, True, False, True, True]
-# ctrlr_dof = [True, True, True, True, True, True]
-# ctrlr_dof = [True, True, True, False, False, False]
 # save_loc = 'kp=%i|kv=%i|ko=%i|dof=%i' % (kp, kv, ko, int(np.sum(ctrlr_dof)))
 save_loc = 'test'
-
-# for conversion between quat and euler
-# the direction in EE local coordinates that the pen tip is facing
-local_start_heading = np.array([0, 0, 1])
-# writing instrument offset from EE in EE coodrinates
-approach_dist = 0.15
-# for plotting to improve arrow visibility
-sampling = 25
 
 try:
     # instantiate robot config and comm interface
     print('Connecting to arm and interface')
     interface.connect()
 
+
     if not sim:
         interface.init_position_mode()
-        interface.send_target_angles(robot_config.START_ANGLES)
+        interface.send_target_angles(START_ANGLES)
 
         # get our joint angles at start position
         # print('Getting start state information')
@@ -139,7 +149,10 @@ try:
     def gen_path(target, q_start):#, T_EE):
         target['seq'] = []
         # offset from location of pickup / dropoff
+        # use approach vec to get correct +/- x/y direction
         approach_vector = approach_dist * target['global_target_heading']
+        # also offset z to lift back and up
+        approach_vector[2] = -0.05 # -approach_dist/2
         # where we want to approach from
         # NOTE from hand writing demo
         # print('Getting target quaternion to align headings')
@@ -153,7 +166,7 @@ try:
 
         # pickup along x
         if target['global_target_heading'][0] == 1:
-            target_euler = [0, np.pi/2, 0]
+            target_euler = [-0.35, np.pi/2, 0]
         # pickup along -x
         elif target['global_target_heading'][0] == -1:
             target_euler = [0, -np.pi/2, np.pi]
@@ -163,7 +176,7 @@ try:
             target_euler = [-np.pi/2, 0, -np.pi/2]
         # pickup along -y
         elif target['global_target_heading'][1] == -1:
-            target_euler = [np.pi/2, 0, -np.pi/2]
+            target_euler = [np.pi/2, -0.2, -np.pi/2]
         else:
             target_euler = [0, 0, 0]
 
@@ -435,13 +448,16 @@ try:
         robot_config,
         rest_angles=[None, 3.14, None, None, None, None]
     )
-    ctrlr_pos = OSC(robot_config, kp=25, ko=0, kv=5, null_controllers=[damping],
+    # for returning home, can have lower gains
+    # ctrlr_pos = OSC(robot_config, kp=25, ko=0, kv=5, null_controllers=[damping],
+    ctrlr_pos = OSC(robot_config, kp=200, ko=0, kv=7, null_controllers=[damping],
                 vmax=None,
                 ctrlr_dof=[True, True, True, False, False, False])
 
     ctrlrx = OSC(robot_config, kp=kp, ko=ko, kv=kv, null_controllers=[damping],
                 vmax=None,
-                ctrlr_dof=[True, True, True, True, False, True])
+                # ctrlr_dof=[True, True, True, True, False, True])
+                ctrlr_dof=[True, True, True, True, True, True])
     ctrlry = OSC(robot_config, kp=kp, ko=ko, kv=kv, null_controllers=[damping],
                 vmax=None,
                 ctrlr_dof=[True, True, True, False, True, True])
@@ -450,23 +466,26 @@ try:
 
 
     # create our adaptive controller
-    adapt = signals.DynamicsAdaptation(
-        n_neurons=4000,
-        n_ensembles=1,
-        n_input=4,  # we apply adaptation on the most heavily stressed joints
-        n_output=4,
-        pes_learning_rate=1e-4,
-        means=[0,0,0,0],
-        variances=[1.57, 1.57, 1.57, 1.57],
-        spherical=True,
-    )
+    if use_adapt:
+        adapt = signals.DynamicsAdaptation(
+            n_neurons=4000,
+            n_ensembles=1,
+            n_input=3,  # we apply adaptation on the most heavily stressed joints
+            n_output=3,
+            pes_learning_rate=1e-4,
+            means=[3.14, 3.14, 3.14],
+            variances=[3.14, 3.14, 3.14],
+            spherical=True,
+        )
+    if track_data:
+        q_track = []
 
     interface.connect()
 
     if not sim:
         interface.init_position_mode()
 
-    interface.send_target_angles(robot_config.START_ANGLES)
+    interface.send_target_angles(START_ANGLES)
 
     if not sim:
         interface.init_force_mode()
@@ -515,8 +534,12 @@ try:
             at_error_count = 0
             error = 1
             ii = -1
-            u_adapt = np.zeros(6)
             print_cnt = 0
+            step_limit_cnt = 0
+
+            if use_adapt:
+                u_adapt = np.zeros(6)
+
             # Last dim is gripper command
             # if not None, then run loop for the number of steps
             # it takes to open/close the gripper
@@ -537,9 +560,21 @@ try:
                 print_cnt += 1
                 ii += 1
                 # print('ii: ', ii)
-                ii = min(ii, seq.shape[0]-1)
+                # ii = min(ii, seq.shape[0]-1)
+                # at end of path, start counting towards our limit
+                if ii > seq.shape[0]-1:
+                    ii = seq.shape[0]-1
+                    step_limit_cnt += 1
+                    if step_limit_cnt > step_limit:
+                        print(f"{colors.red}REACHED STEP LIMIT{colors.endc}")
+                        break
+
                 # get arm feedback
                 feedback = interface.get_feedback()
+
+                if track_data:
+                    q_track.append(feedback['q'])
+
                 hand_xyz = robot_config.Tx('EE', feedback['q'])#, x=approach_buffer)
                 # error = np.linalg.norm(hand_xyz - target['pos'])
                 error = np.linalg.norm(hand_xyz - seq[-1][:3])
@@ -568,6 +603,7 @@ try:
                         # xyz_offset=pen_buffer
                         # target_vel=np.hstack([vel, np.zeros(3)])
                         )
+                    training_signal = ctrlrx.training_signal[1:4]
                 # pick/place along y
                 elif abs(target['global_target_heading'][1]) == 1:
                     # u = ctrlrx.generate(
@@ -579,6 +615,7 @@ try:
                         # xyz_offset=pen_buffer
                         # target_vel=np.hstack([vel, np.zeros(3)])
                         )
+                    training_signal = ctrlry.training_signal[1:4]
                 else:
                     u = ctrlr_pos.generate(
                         q=feedback['q'],
@@ -588,17 +625,19 @@ try:
                         # xyz_offset=pen_buffer
                         # target_vel=np.hstack([vel, np.zeros(3)])
                         )
+                    training_signal = ctrlr_pos.training_signal[1:4]
 
 
                 # TODO set dimensions being adapted as list of bools
                 # print(feedback["q"][:4])
                 # print(np.array(ctrlr.training_signal[:4]))
-                # u_adapt[:4] = adapt.generate(
-                #     input_signal=np.asarray(feedback["q"][:4]),
-                #     training_signal=np.array(ctrlr.training_signal[:4]),
-                # )
-                #
-                # u += u_adapt
+                if use_adapt:
+                    u_adapt[1:4] = adapt.generate(
+                        input_signal=np.asarray(feedback["q"][1:4]),
+                        training_signal=np.array(training_signal),
+                    )
+
+                    u += u_adapt
 
                 # if target['open_gripper'][ii] != -1:
                 # if seq[ii][-1] != -1:
@@ -679,8 +718,12 @@ except Exception as e:
 finally:
     if not sim:
         interface.init_position_mode()
-        interface.send_target_angles(robot_config.START_ANGLES)
+        interface.send_target_angles(START_ANGLES)
     interface.disconnect()
+    if track_data:
+        plt.figure
+        plt.plot(np.asarray(q_track))
+        plt.show()
     # np.savez_compressed('arm_results.npz', q=q_track, ee=ee_track)
 
     # if plot:
