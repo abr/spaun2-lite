@@ -14,7 +14,8 @@ import pydmps
 import glfw
 
 from threading import Thread
-from abr_control.controllers import OSC, Damping, signals, RestingConfig
+from abr_control.controllers import OSC, Damping, RestingConfig
+from dynamics_adaptation import DynamicsAdaptation
 from abr_control.utils import transformations as transform
 from gauss_path_planner import GaussianPathPlanner
 from circle_path_planner import CirclePathPlanner
@@ -37,8 +38,13 @@ if 'sim' in sys.argv:
     sim = True
 if 'track' in sys.argv:
     track_data = True
-if 'adapt' in sys.argv:
+if 'cpu' in sys.argv:
     use_adapt = True
+    backend = 'cpu'
+if 'fpga' in sys.argv:
+    use_adapt = True
+    backend = 'fpga'
+
 
 dt = 0.001
 error_thres = 0.04
@@ -50,7 +56,6 @@ grip_steps = 220
 kp = 30
 kv = 5
 ko = 102
-# ko = 200
 axes = 'rxyz'
 # for conversion between quat and euler
 # the direction in EE local coordinates that the pen tip is facing
@@ -90,9 +95,19 @@ targets = [
             'kwargs': {'n_timesteps': 2000},
         },
     },
+    # {
+    #     'name': 'metal_shelf',
+    #     'pos': np.array([0.75, 0.0, 0.73]),
+    #     'action': 'dropoff',
+    #     'global_target_heading': np.array([1, 0, 0]),
+    #     'path': {
+    #         'type': 'arc',
+    #         'kwargs': {'n_timesteps': 1000},
+    #     },
+    # },
     {
-        'name': 'shelf',
-        'pos': np.array([0.75, 0.0, 0.73]),
+        'name': 'wooden_shelf2',
+        'pos': np.array([0.65, 0.0, 0.84]),
         'action': 'dropoff',
         'global_target_heading': np.array([1, 0, 0]),
         'path': {
@@ -110,9 +125,19 @@ targets = [
             'kwargs': {'n_timesteps': 2000},
         },
     },
+    # {
+    #     'name': 'metal_shelf',
+    #     'pos': np.array([0.75, 0.2, 0.73]),
+    #     'action': 'dropoff',
+    #     'global_target_heading': np.array([1, 0, 0]),
+    #     'path': {
+    #         'type': 'arc',
+    #         'kwargs': {'n_timesteps': 1000},
+    #     },
+    # },
     {
-        'name': 'shelf',
-        'pos': np.array([0.75, 0.2, 0.73]),
+        'name': 'wooden_shelf2',
+        'pos': np.array([0.65, 0.2, 0.84]),
         'action': 'dropoff',
         'global_target_heading': np.array([1, 0, 0]),
         'path': {
@@ -489,7 +514,7 @@ try:
 
     # create our adaptive controller
     if use_adapt:
-        adapt = signals.DynamicsAdaptation(
+        adapt = DynamicsAdaptation(
             n_neurons=4000,
             n_ensembles=1,
             n_input=3,  # we apply adaptation on the most heavily stressed joints
@@ -498,6 +523,7 @@ try:
             means=[3.14, 3.14, 3.14],
             variances=[3.14, 3.14, 3.14],
             spherical=True,
+            backend=backend
         )
     if track_data:
         q_track = []
