@@ -31,6 +31,8 @@ sim = False
 plot = False
 track_data = False
 use_adapt = False
+save_weights = False
+load_weights = False
 
 if 'plot' in sys.argv:
     plot = True
@@ -49,7 +51,15 @@ if 'fpga' in sys.argv:
     use_adapt = True
     backend = 'fpga'
     print(f"{colors.green}Using FPGA Adaptation{colors.endc}")
+if 'save' in sys.argv:
+    save_weights = True
+if 'load' in sys.argv:
+    load_weights = True
 
+if load_weights:
+    weights = np.load('weights.npz')['weights']
+else:
+    weights = None
 
 dt = 0.001
 error_thres = 0.04
@@ -572,7 +582,8 @@ try:
             variances=[3.14, 3.14, 3.14],
             spherical=True,
             backend=backend,
-            payload_ctx=True
+            payload_ctx=True,
+            weights=weights
         )
     if track_data:
         q_track = []
@@ -841,6 +852,11 @@ finally:
         interface.init_position_mode()
         interface.send_target_angles(START_ANGLES)
     interface.disconnect()
+
+    if save_weights:
+        weights = adapt.get_weights()
+        np.savez_compressed('weights.npz', weights=weights)
+
     if track_data:
         np.savez_compressed(
             'data_track.npz',

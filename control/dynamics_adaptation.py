@@ -7,6 +7,7 @@ from nengo_fpga.networks import FpgaPesEnsembleNetwork
 import nengo_fpga
 
 from abr_control._vendor.nengolib.stats import ScatteredHypersphere, spherical_transform
+from abr_control.utils import colors as c
 
 
 class DynamicsAdaptation:
@@ -134,7 +135,9 @@ class DynamicsAdaptation:
 
         if weights is None:
             weights = np.zeros((self.n_ensembles, n_output, self.n_neurons))
-            print("Initializing connection weights to all zeros")
+            print(f"{c.yellow}Initializing connection weights to all zeros{c.endc}")
+        else:
+            print(f"{c.yellow}Using trained weights{c.endc}")
 
         if encoders is None:
             np.random.seed = self.seed
