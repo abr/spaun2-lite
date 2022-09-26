@@ -57,7 +57,7 @@ if 'load' in sys.argv:
     load_weights = True
 
 if load_weights:
-    weights = np.load('weights.npz')['weights']
+    weights = np.load(f'{backend}_weights.npz')['weights']
 else:
     weights = None
 
@@ -102,7 +102,8 @@ else:
 targets = [
     {
         'name': 'jar',
-        'pos': np.array([0.1, -0.82, 0.62]),
+        # 'pos': np.array([0.1, -0.82, 0.62]),
+        'pos': np.array([0.15, -0.82, 0.62]),
         'action': 'pickup', # reach with buffer, open, reach, close, back up
         'global_target_heading': np.array([0, -1, 0]),
         'path': {
@@ -123,7 +124,7 @@ targets = [
     # },
     {
         'name': 'wooden_shelf2',
-        'pos': np.array([0.65, 0.0, 0.84]),
+        'pos': np.array([0.65, 0.0, 0.83]),
         'action': 'dropoff',
         'global_target_heading': np.array([1, 0, 0]),
         'path': {
@@ -134,7 +135,8 @@ targets = [
     },
     {
         'name': 'jar',
-        'pos': np.array([-0.1, -0.82, 0.62]),
+        # 'pos': np.array([-0.1, -0.82, 0.62]),
+        'pos': np.array([-0.05, -0.82, 0.62]),
         'action': 'pickup', # reach with buffer, open, reach, close, back up
         'global_target_heading': np.array([0, -1, 0]),
         'path': {
@@ -855,7 +857,7 @@ finally:
 
     if save_weights:
         weights = adapt.get_weights()
-        np.savez_compressed('weights.npz', weights=weights)
+        np.savez_compressed(f'{backend}_weights.npz', weights=weights)
 
     if track_data:
         np.savez_compressed(
