@@ -1,4 +1,5 @@
 import nengo
+import random
 # import logging
 import numpy as np
 
@@ -72,8 +73,12 @@ class DynamicsAdaptation:
         tau_output=0.2,
         dt=0.001,
         backend='cpu',
+        use_probes=False,
+        payload_ctx=False,
         **kwargs
     ):
+        if use_probes:
+            self.probes = []
         if backend == 'fpga':
             # Set the nengo logging level to 'info' to display all of the information
             # coming back over the ssh connection.
@@ -82,6 +87,7 @@ class DynamicsAdaptation:
             board = "pynq2"
 
         self.dt = dt
+        self.payload_ctx = payload_ctx
 
         # set up means and variances to be same dimensionality as original input signal
         self.variances = (
@@ -143,7 +149,26 @@ class DynamicsAdaptation:
                 )
             encoders = encoders_dist.sample(n_neurons * n_ensembles, n_input)
             encoders = encoders.reshape(n_ensembles, n_neurons, n_input)
+            if self.payload_ctx:
+                ctx = []
+                for ii in range(0, n_neurons):
+                    ctx.append(random.choice([1, -1]))
+                # print(encoders.shape)
+                # print(np.asarray(ctx)[np.newaxis, :, np.newaxis].shape)
+                tmp = np.zeros((n_ensembles, n_neurons, n_input+1))
+                tmp[:, :, 1:] = encoders
+                tmp[:, :, 0] = ctx
+                encoders = None
+                encoders = tmp
+                tmp = None
+                n_input += 1
+                # encoders = np.stack((encoders, np.asarray(ctx)[np.newaxis, :, np.newaxis]), dim=2)
+                print(encoders.shape)
+                print(f"+:{np.sum(x for x in ctx if x>0)}")
+                print(f"-:{np.sum(x for x in ctx if x<0)}")
+                # raise Exception
 
+        print(f"N INPUT: {n_input}")
         self.input_signal = np.zeros(n_input)
         self.training_signal = np.zeros(n_output)
         self.output = np.zeros(n_output)
@@ -177,11 +202,14 @@ class DynamicsAdaptation:
                         n_neurons=self.n_neurons,
                         dimensions=n_input,
                         intercepts=intercepts[ii],
-                        radius=np.sqrt(n_input),
+                        # radius=np.sqrt(n_input),
+                        radius=2 if self.payload_ctx else 1,
                         encoders=encoders[ii],
                         **kwargs,
                     )
                 )
+                if use_probes:
+                    self.probes.append(nengo.Probe(self.adapt_ens[-1].neurons, synapse=None))
 
                 # hook up input signal to adaptive population to provide context
                 nengo.Connection(
@@ -215,7 +243,7 @@ class DynamicsAdaptation:
         else:
             raise Exception(f"{backend} is not a currently supported backend")
 
-    def generate(self, input_signal, training_signal):
+    def generate(self, input_signal, training_signal, payload_ctx=None):
         """Generates the control signal
 
         Parameters
@@ -232,6 +260,9 @@ class DynamicsAdaptation:
 
         # store local copies to feed in to the adaptive population
         self.input_signal = np.squeeze(input_signal)
+        if payload_ctx is not None:
+            self.input_signal = np.hstack((payload_ctx, self.input_signal))
+
         self.training_signal = training_signal
 
         # run the simulation t generate the adaptive signal

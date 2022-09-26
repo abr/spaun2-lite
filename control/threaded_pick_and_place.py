@@ -34,16 +34,21 @@ use_adapt = False
 
 if 'plot' in sys.argv:
     plot = True
+    print(f"{colors.green}Plotting path{colors.endc}")
 if 'sim' in sys.argv:
     sim = True
+    print(f"{colors.green}Running in sim{colors.endc}")
 if 'track' in sys.argv:
     track_data = True
+    print(f"{colors.green}Tracking data{colors.endc}")
 if 'cpu' in sys.argv:
     use_adapt = True
     backend = 'cpu'
+    print(f"{colors.green}Using CPU Adaptation{colors.endc}")
 if 'fpga' in sys.argv:
     use_adapt = True
     backend = 'fpga'
+    print(f"{colors.green}Using FPGA Adaptation{colors.endc}")
 
 
 dt = 0.001
@@ -94,6 +99,7 @@ targets = [
             'type': 'arc',
             'kwargs': {'n_timesteps': 2000},
         },
+        'mass': False
     },
     # {
     #     'name': 'metal_shelf',
@@ -114,6 +120,7 @@ targets = [
             'type': 'arc',
             'kwargs': {'n_timesteps': 1000},
         },
+        'mass': False
     },
     {
         'name': 'jar',
@@ -124,6 +131,7 @@ targets = [
             'type': 'arc',
             'kwargs': {'n_timesteps': 2000},
         },
+        'mass': True
     },
     # {
     #     'name': 'metal_shelf',
@@ -144,6 +152,7 @@ targets = [
             'type': 'arc',
             'kwargs': {'n_timesteps': 1000},
         },
+        'mass': True
     },
     {
         'name': 'home',
@@ -159,6 +168,7 @@ targets = [
                 'axes': axes
             },
         },
+        'mass': False
     }
 
 ]
@@ -193,8 +203,13 @@ try:
     # open_gripper = []
 
     # for tt, target in enumerate(targets):
-    def gen_path(target, q_start):#, T_EE):
+    def gen_path(target, q_start, starting_payload):#, T_EE):
+        """
+        starting_payload: int
+            1 for payload, -1 for no payload
+        """
         target['seq'] = []
+        target['payload_ctx'] = []
         # offset from location of pickup / dropoff
         # use approach vec to get correct +/- x/y direction
         approach_vector = approach_dist * target['global_target_heading']
@@ -302,6 +317,10 @@ try:
                     np.array([-1]*len(pos_path))[:, np.newaxis]
                 ))
             )
+            # our payload remains the same for the start as it was
+            # at the end of the previous path
+            target['payload_ctx'].append(np.array([starting_payload]*len(pos_path)))
+
             # need this for the approach, grasp/dropoff, backup
             path_planner_linear = GaussianPathPlanner(
                 max_v=1,
@@ -341,6 +360,11 @@ try:
                     np.array([-1]*len(path_planner_linear.position_path))[:, np.newaxis]
                 ))
             )
+
+            target['payload_ctx'].append(
+                np.array([starting_payload]*len(path_planner_linear.position_path))
+            )
+
         else:
             raise ValueError(f"{target['path']['type']} is not a valid path planner")
 
@@ -370,6 +394,8 @@ try:
                         ]] * grip_steps
                     )
                 )
+                # if target is pickup, there is no payload atm (-1)
+                target['payload_ctx'].append(np.array([-1]*grip_steps))
                 # print(len(target['seq']))
 
             # WAYPOINT 3: move up buffer dist to pickup/dropoff loc
@@ -400,14 +426,24 @@ try:
                     np.array([-1]*len(path_planner_linear.position_path))[:, np.newaxis]
                 ))
             )
-            # print(len(target['seq']))
+            # have moved to the pickup/dropoff location, atm the payload ctx is the
+            # same as it was at the start of the reach, we have either opened the gripper
+            # in preparation to pickup a payload, or have kept it shut because we are
+            # still holding the payload
+            target['payload_ctx'].append(
+                np.array([starting_payload]*len(path_planner_linear.position_path))
+            )
 
             if target['action'] == 'pickup':
                 # at target, close gripper
                 open_gripper = 0
+                # closing gripper, but have not lifted payload yet
+                pl_ctx = -1
             elif target['action'] == 'dropoff':
                 # at target open gripper
                 open_gripper = 1
+                # have not released yet, but opening gripper
+                pl_ctx = 1 if target['mass'] else -1
 
 
             # WAYPOINT 4: open/close hand and maintain position depending on whether
@@ -425,6 +461,7 @@ try:
                     ]] * grip_steps
                 )
             )
+            target['payload_ctx'].append(np.array([pl_ctx]*grip_steps))
 
             # WAYPOINT 5: back up buffer dist and maintain gripper
             path_planner_linear.generate_path(
@@ -463,6 +500,16 @@ try:
                     np.array([open_gripper]*len(path_planner_linear.position_path))[:, np.newaxis]
                 ))
             )
+            # backing up and payload is opposite of what it was before the pickup/dropoff
+            if target['mass']:
+                target['payload_ctx'].append(
+                    np.array([-1*pl_ctx]*len(path_planner_linear.position_path))
+                )
+            else:
+                # empty jar, so mark context as "no mass"
+                target['payload_ctx'].append(
+                    np.array([-1]*len(path_planner_linear.position_path))
+                )
             # print(len(target['seq']))
 
             # WAYPOINT 6: if we just dropped something off, close the hand
@@ -481,6 +528,7 @@ try:
                         ]] * grip_steps
                     )
                 )
+                target['payload_ctx'].append(np.array([-1]*grip_steps))
 
             print('LEN SEQ: ', len(target['seq']))
             print('SHAPES')
@@ -515,7 +563,7 @@ try:
     # create our adaptive controller
     if use_adapt:
         adapt = DynamicsAdaptation(
-            n_neurons=4000,
+            n_neurons=1000,
             n_ensembles=1,
             n_input=3,  # we apply adaptation on the most heavily stressed joints
             n_output=3,
@@ -523,10 +571,13 @@ try:
             means=[3.14, 3.14, 3.14],
             variances=[3.14, 3.14, 3.14],
             spherical=True,
-            backend=backend
+            backend=backend,
+            payload_ctx=True
         )
     if track_data:
         q_track = []
+        train_track = []
+        input_track = []
 
     interface.connect()
 
@@ -544,7 +595,14 @@ try:
         # T_EE = robot_config.T('EE', feedback['q'])
         pos_to_maintain = robot_config.Tx('EE', feedback['q'])
         if not sim:
-            new_thread = Thread(target=gen_path, args=(target, np.copy(feedback['q'])))#, np.copy(T_EE)))
+            new_thread = Thread(
+                target=gen_path,
+                args=(
+                    target,
+                    np.copy(feedback['q']),
+                    targets[target_count-1]['payload_ctx'][-1][-1] if target_count > 0 else -1
+                )
+            )
             new_thread.start()
             # maintain current position while path is generated
             # need to send control signals every 10Hz or so or else
@@ -572,7 +630,11 @@ try:
 
             new_thread.handled = True
         else:
-            gen_path(target, np.copy(feedback['q']))
+            gen_path(
+                target,
+                np.copy(feedback['q']),
+                targets[target_count-1]['payload_ctx'][-1][-1] if target_count > 0 else -1
+            )
 
         # for proper visualization of gripper in mujoco
         last_grip = None
@@ -685,9 +747,15 @@ try:
                     u_adapt[1:4] = adapt.generate(
                         input_signal=np.asarray(feedback["q"][1:4]),
                         training_signal=np.array(training_signal),
+                        payload_ctx=target['payload_ctx'][seq_count][ii]
                     )
+                    # print(target['payload_ctx'][seq_count][ii])
 
                     u += u_adapt
+
+                    if track_data:
+                        train_track.append(training_signal)
+                        input_track.append(feedback["q"][1:4])
 
                 # if target['open_gripper'][ii] != -1:
                 # if seq[ii][-1] != -1:
@@ -774,6 +842,12 @@ finally:
         interface.send_target_angles(START_ANGLES)
     interface.disconnect()
     if track_data:
+        np.savez_compressed(
+            'data_track.npz',
+            q=q_track,
+            input_signal=input_track,
+            training_signal=train_track
+        )
         plt.figure
         plt.plot(np.asarray(q_track))
         plt.show()
