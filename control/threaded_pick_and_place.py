@@ -24,6 +24,8 @@ import control_utils
 from abr_analyze import DataHandler
 from abr_control.utils import colors
 
+from color_segmentation import colSegmentation
+
 import matplotlib.pyplot as plt
 """
 """
@@ -33,6 +35,7 @@ track_data = False
 use_adapt = False
 save_weights = False
 load_weights = False
+debug = False
 
 if 'plot' in sys.argv:
     plot = True
@@ -55,6 +58,8 @@ if 'save' in sys.argv:
     save_weights = True
 if 'load' in sys.argv:
     load_weights = True
+if 'debug' in sys.argv:
+    debug = True
 
 if load_weights:
     weights = np.load(f'{backend}_weights.npz')['weights']
@@ -184,6 +189,15 @@ targets = [
     }
 
 ]
+
+if not sim:
+    colseg = colSegmentation(debug, True)
+    segmentation_thread = Thread(
+        target = colseg.run
+        # target=color_segmentation.run,
+        # args=(debug, True)
+    )
+    segmentation_thread.start()
 
 if sim:
     for target in targets:
@@ -854,6 +868,9 @@ finally:
         interface.init_position_mode()
         interface.send_target_angles(START_ANGLES)
     interface.disconnect()
+
+    # segmentation_thread.handled = True
+    colseg.running = False
 
     if save_weights:
         weights = adapt.get_weights()
