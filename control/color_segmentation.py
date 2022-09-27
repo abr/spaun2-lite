@@ -4,16 +4,59 @@
 import numpy as np
 import cv2
 import sys
+from abr_control.utils import colors as c
 
 class colSegmentation:
-    def __init__(self, debug=False, video=True):
+    def __init__(self, debug=False, video=True, kernel_size=None, get_contours=False):
         self.debug = debug
         self.video = video
+        self.kernel_size = kernel_size
+        self.get_contours = get_contours
+        print(f'{c.green}STARTING COLOR SEGMENTATION{c.endc}')
 
-    def get_mask(self, brightHSV, minHSV, maxHSV):
-        maskHSV = cv2.inRange(brightHSV, minHSV, maxHSV)
-        resultHSV = cv2.bitwise_and(brightHSV, brightHSV, mask = maskHSV)
-        return resultHSV
+    def get_mask(self, brightHSV, minHSV, maxHSV, kernel_size=None, get_contours=False):
+    # def get_mask(self, brightHSV, minHSV, maxHSV, kernel_size=(7, 7), get_contours=True):
+        """
+        brightHSV:
+        minHSV: len 3 list of floats
+            minimum HSV threshold
+        maxHSV: len 3 list of floats
+            maximum HSV threshold
+        kernel_size: 2 tuple of ints
+            kernel size for filtering (7x7 works well)
+        get_contours: bool, Optional (Default: False)
+            returns red outline around segmented mask
+        """
+        # SIMPLE
+        # maskHSV = cv2.inRange(brightHSV, minHSV, maxHSV)
+        # resultHSV = cv2.bitwise_and(brightHSV, brightHSV, mask = maskHSV)
+
+        # CLEANUP
+        mask = cv2.inRange(brightHSV, minHSV, maxHSV)
+
+        if kernel_size is not None:
+            #define kernel size
+            kernel = np.ones(kernel_size,np.uint8)
+            # Remove unnecessary noise from mask
+            mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, kernel)
+            mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, kernel)
+            resultHSV = cv2.bitwise_and(brightHSV, brightHSV, mask=mask)
+        else:
+            resultHSV = cv2.bitwise_and(brightHSV, brightHSV, mask=mask)
+
+        if get_contours:
+            # Find contours from the mask
+            contours, hierarchy = cv2.findContours(mask.copy(), cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+            # resultHSV = cv2.drawContours(resultHSV, contours, -1, (0, 0, 255), 3)
+        else:
+            contours = None
+
+        if np.sum(mask) > 1e6:
+            print('DETECTED')
+        else:
+            print('NOTHING')
+
+        return resultHSV, contours
 
     # mouse callback function
     def showPixelValue(self, event,x,y,flags,param):
@@ -118,8 +161,12 @@ class colSegmentation:
             while self.running:
                 ret, frame = cam.read()
                 brightHSV = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV)
-                resultHSV = self.get_mask(brightHSV, minHSV, maxHSV)
+                resultHSV, contours = self.get_mask(brightHSV, minHSV, maxHSV, self.kernel_size, self.get_contours)
+                # resultHSV, contours = self.get_mask(brightHSV, minHSV, maxHSV)
                 # frame = cv2.resize(frame, None, fx=0.5, fy=0.5, interpolation=cv2.INTER_AREA)
+                if contours is not None:
+                    frame = cv2.drawContours(frame, contours, -1, (0, 0, 255), 3)
+
                 img = np.concatenate((frame, resultHSV), axis=1)
                 # cv2.imshow('Input', np.concatenate((img, resultHSV), axis=1))
                 # if combinedResult is None:
