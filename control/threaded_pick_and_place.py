@@ -193,10 +193,18 @@ targets = [
 
 if not sim:
     colseg = colSegmentation(debug, True)
+    # mask area of camera where we count pixels for detecting jar
+    detection_mask = np.zeros((480, 640), dtype='uint8')
+    detection_mask[:, 140:500] = int(1)
+    detection_thres=15000 # number of pixels that need to have hsv color
+    kernel_size = (7, 7)
+    get_contours = True
+
     segmentation_thread = Thread(
-        target = colseg.run
+        target = colseg.run,
         # target=color_segmentation.run,
-        # args=(debug, True)
+        # args=((7,7), True, 1e6)
+        args=(kernel_size, get_contours, detection_thres, detection_mask)
     )
     segmentation_thread.start()
 
@@ -615,6 +623,7 @@ try:
 
     # if not sim:
     #     interface.init_force_mode()
+    pl_ctx_sum = 0
 
     for target_count, target in enumerate(targets):
         print('Getting start state information')
@@ -663,6 +672,15 @@ try:
             move_to_next_target = False
             path_gen_thread_started = False
             next_path_ready = False
+
+            # if pl_ctx_sum > 50:
+            #     pl_ctx = 1
+            # else:
+            #     pl_ctx = -1
+            #     pl_ctx_sum = 0
+            pl_ctx = -1
+
+            print(f"{colors.yellow}PAYLOAD CONTEXT: {pl_ctx}{colors.endc}")
 
             # make sure we are at error thres and the next path is ready
             while not move_to_next_target:
@@ -788,9 +806,12 @@ try:
                     u_adapt[1:4] = adapt.generate(
                         input_signal=np.asarray(feedback["q"][1:4]),
                         training_signal=np.array(training_signal),
-                        payload_ctx=target['payload_ctx'][seq_count][ii]
+                        # payload_ctx=target['payload_ctx'][seq_count][ii]
+                        payload_ctx=pl_ctx
                     )
-                    # print(target['payload_ctx'][seq_count][ii])
+                    # if pl_ctx != target['payload_ctx'][seq_count][ii]:
+                    #     print(f"{colors.red}MISMATCH BETWEEN GT ({target['payload_ctx'][seq_count][ii]}) AND COLSEG ({pl_ctx}){colors.endc}")
+                    print(target['payload_ctx'][seq_count][ii])
 
                     u += u_adapt
 
@@ -800,11 +821,30 @@ try:
 
                 # open / close gripper
                 if not sim:
+                    # only during open/close steps, not buffer steps
+                    # 1 open, 0 close, -1 nothing
                     if step_limit_cnt == 0:
                         if seq[ii][-1] == 1:
                             interface.open_hand(True)
+                            if target['action'] == 'pickup':
+                                # running sum of payload context
+                                # check if sum above threshold to set pl_ctx to 1
+                                pl_ctx_sum += colseg.detected
+                            elif target['action'] == 'dropoff':
+                                # we are opening the hand and letting go of the payload
+                                pl_ctx = -1
+                                plt_ctx_sum = 0
+                            else:
+                                # else we are dropping off
+                                plt_ctx_sum = 0
                         elif seq[ii][-1] == 0:
                             interface.open_hand(False)
+                            if target['action'] == 'pickup':
+                                if pl_ctx_sum > 50:
+                                    pl_ctx = 1
+                                else:
+                                    pl_ctx = -1
+                                    pl_ctx_sum = 0
 
                     # apply the control signal
                     interface.send_forces(np.array(u, dtype='float32'))

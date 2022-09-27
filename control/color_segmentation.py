@@ -7,14 +7,13 @@ import sys
 from abr_control.utils import colors as c
 
 class colSegmentation:
-    def __init__(self, debug=False, video=True, kernel_size=None, get_contours=False):
+    def __init__(self, debug=False, video=True):
         self.debug = debug
         self.video = video
-        self.kernel_size = kernel_size
-        self.get_contours = get_contours
+        self.detected = False
         print(f'{c.green}STARTING COLOR SEGMENTATION{c.endc}')
 
-    def get_mask(self, brightHSV, minHSV, maxHSV, kernel_size=None, get_contours=False):
+    def get_mask(self, brightHSV, minHSV, maxHSV, kernel_size=None, get_contours=False, detect_thres=1e6, detection_mask=None):
     # def get_mask(self, brightHSV, minHSV, maxHSV, kernel_size=(7, 7), get_contours=True):
         """
         brightHSV:
@@ -40,9 +39,30 @@ class colSegmentation:
             # Remove unnecessary noise from mask
             mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, kernel)
             mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, kernel)
-            resultHSV = cv2.bitwise_and(brightHSV, brightHSV, mask=mask)
+
+        # detection_mask[:, :320] = int(1)
+        # # for ii in range(0, detection_mask.shape[0]):
+        # for jj in range(0, detection_mask.shape[1]):
+        #     if jj > 100 and jj < 540:
+        #         detection_mask[:, jj] = int(1)
+        #     # cv2.imshow('', detection_mask)
+
+        # import matplotlib.pyplot as plt
+        # plt.figure()
+        # plt.imshow(detection_mask)
+        # plt.show()
+
+        # select an area of the image to check for detections
+        if detection_mask is not None:
+            mask = cv2.bitwise_and(mask, detection_mask, mask=mask)
+
+        # print(np.sum(mask))
+        if np.sum(mask) > detect_thres:
+            self.detected = True
         else:
-            resultHSV = cv2.bitwise_and(brightHSV, brightHSV, mask=mask)
+            self.detected = False
+
+        resultHSV = cv2.bitwise_and(brightHSV, brightHSV, mask=mask)
 
         if get_contours:
             # Find contours from the mask
@@ -51,10 +71,7 @@ class colSegmentation:
         else:
             contours = None
 
-        if np.sum(mask) > 1e6:
-            print('DETECTED')
-        else:
-            print('NOTHING')
+
 
         return resultHSV, contours
 
@@ -87,7 +104,7 @@ class colSegmentation:
             # cv2.imshow('PRESS P for Previous, N for Next Image',combinedResult)
 
 
-    def run(self):
+    def run(self, kernel_size=None, get_contours=False, detect_thres=1e6, detection_mask=None):
         self.running = True
         # initialize the camera
         # If you have multiple camera connected with
@@ -161,7 +178,15 @@ class colSegmentation:
             while self.running:
                 ret, frame = cam.read()
                 brightHSV = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV)
-                resultHSV, contours = self.get_mask(brightHSV, minHSV, maxHSV, self.kernel_size, self.get_contours)
+                resultHSV, contours = self.get_mask(
+                    brightHSV,
+                    minHSV,
+                    maxHSV,
+                    kernel_size,
+                    get_contours,
+                    detect_thres,
+                    detection_mask
+                )
                 # resultHSV, contours = self.get_mask(brightHSV, minHSV, maxHSV)
                 # frame = cv2.resize(frame, None, fx=0.5, fy=0.5, interpolation=cv2.INTER_AREA)
                 if contours is not None:
@@ -211,5 +236,12 @@ if __name__ == '__main__':
     video = True
     if 'debug' in sys.argv:
         debug = True
+
+    detection_mask = np.zeros((480, 640), dtype='uint8')
+    detection_mask[:, 140:500] = int(1)
     col_seg = colSegmentation(debug=debug, video=video)
-    col_seg.run()
+    col_seg.run(
+        kernel_size=(7, 7),
+        get_contours=True,
+        detect_thres=5e-4,
+        detection_mask=detection_mask)
