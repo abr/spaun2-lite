@@ -36,6 +36,7 @@ use_adapt = False
 save_weights = False
 load_weights = False
 debug = False
+backend = 'pd'
 
 if 'plot' in sys.argv:
     plot = True
@@ -68,7 +69,7 @@ else:
 
 dt = 0.001
 error_thres = 0.04
-target_error_count = 400 # number of steps to maintain sub error_thres error level
+target_error_count = 100 # number of steps to maintain sub error_thres error level
 grip_steps = 220
 # kp = 50
 # kv = 7
@@ -85,7 +86,7 @@ approach_dist = 0.15
 # for plotting to improve arrow visibility
 # sampling = 25
 # steps after path planner reaches end to allow for controller to catch up
-step_limit=4000
+step_limit = 4000 if backend != 'pd' else 0
 learning_rate=2.5e-5
 
 # rotate base wrt config default
