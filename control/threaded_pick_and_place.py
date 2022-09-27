@@ -518,7 +518,6 @@ try:
             #     open_gripper = 0
             open_gripper = -1
 
-
             target['seq'].append(
                 np.hstack((
                     path_planner_linear.position_path,
@@ -613,114 +612,139 @@ try:
 
     interface.send_target_angles(START_ANGLES)
 
-    if not sim:
-        interface.init_force_mode()
+    # if not sim:
+    #     interface.init_force_mode()
 
     for target_count, target in enumerate(targets):
         print('Getting start state information')
         feedback = interface.get_feedback()
-        # T_EE = robot_config.T('EE', feedback['q'])
-        pos_to_maintain = robot_config.Tx('EE', feedback['q'])
-        if not sim:
-            new_thread = Thread(
-                target=gen_path,
-                args=(
-                    target,
-                    np.copy(feedback['q']),
-                    targets[target_count-1]['payload_ctx'][-1][-1] if target_count > 0 else -1
-                )
-            )
-            new_thread.start()
-            # maintain current position while path is generated
-            # need to send control signals every 10Hz or so or else
-            # will get kicked out of force mode. Once kicked out will
-            # need to return to home position in position mode to switch
-            # back to torque mode
-            first_step = True
-            while new_thread.is_alive():
-                if first_step:
-                    first_step = False
-                    print(f"Maintaining {pos_to_maintain} while path generates")
-                feedback = interface.get_feedback()
-                u = ctrlr_pos.generate(
-                    q=feedback['q'],
-                    dq=feedback['dq'],
-                    target=[pos_to_maintain[0], pos_to_maintain[1], pos_to_maintain[2], 0, 0, 0],
-                    # target=seq[-1][:6],
-                    # xyz_offset=pen_buffer
-                    # target_vel=np.hstack([vel, np.zeros(3)])
-                    )
-                if not sim:
-                    interface.send_forces(np.array(u, dtype='float32'))
-                # else:
-                #     interface.send_forces(np.hstack((u, [0, 0, 0])))
 
-            new_thread.handled = True
-        else:
+        if target_count == 0:
+            # generate the first path before turning on force mode
             gen_path(
                 target,
                 np.copy(feedback['q']),
                 targets[target_count-1]['payload_ctx'][-1][-1] if target_count > 0 else -1
             )
 
+            interface.init_force_mode()
+
         # for proper visualization of gripper in mujoco
         last_grip = None
         print(f"TARGET: {target['name']}")
         for seq_count, seq in enumerate(target['seq']):
             print(f"SEQ: {seq_count}")
+            # tracks consecutive steps where we are below error threshold
             at_error_count = 0
-            error = 1
+            # path counter
             ii = -1
+            # take modulus of counter to print occasionally
             print_cnt = 0
+            # counts steps after the end of the path to allow for buffer to reach
             step_limit_cnt = 0
 
             if use_adapt:
                 u_adapt = np.zeros(6)
 
             # Last dim is gripper command
-            # if not None, then run loop for the number of steps
-            # it takes to open/close the gripper
-            # at_count = target_error_count
+            # if -1 then hand is not opening so use error count
             if seq[-1][-1] == -1:
                 at_count = target_error_count
+            # otherwise we are opening the hand so just wait however
+            # long it takes to open the hand (grip_steps param)
             else:
                 at_count = grip_steps
-            exit = False
 
-            while at_error_count < at_count:
-                if sim:
-                    if interface.viewer.exit:
-                        glfw.destroy_window(interface.viewer.window)
-                        exit = True
-                        break
+            # for properly closing mujoco sim
+            exit_sim = False
 
+            # tracks if all conditions are met to continue to next target
+            move_to_next_target = False
+            path_gen_thread_started = False
+            next_path_ready = False
+
+            # make sure we are at error thres and the next path is ready
+            while not move_to_next_target:
                 print_cnt += 1
                 ii += 1
-                # print('ii: ', ii)
-                # ii = min(ii, seq.shape[0]-1)
-                # at end of path, start counting towards our limit
-                if ii > seq.shape[0]-1:
-                    ii = seq.shape[0]-1
-                    step_limit_cnt += 1
 
                 # get arm feedback
                 feedback = interface.get_feedback()
 
-                if track_data:
-                    q_track.append(feedback['q'])
-
+                # calculate error and track if below threshold
                 hand_xyz = robot_config.Tx('EE', feedback['q'])#, x=approach_buffer)
-                # error = np.linalg.norm(hand_xyz - target['pos'])
                 error = np.linalg.norm(hand_xyz - seq[-1][:3])
                 if error < error_thres:
                     at_error_count += 1
                 else:
                     at_error_count = 0
 
-                if step_limit_cnt > step_limit:
-                    print(f"{colors.red}REACHED STEP LIMIT{colors.endc}")
-                    at_error_count = at_count + 1
+                # save joint data to file
+                if track_data:
+                    q_track.append(feedback['q'])
 
+                if sim:
+                    # check for closing sim
+                    if interface.viewer.exit:
+                        glfw.destroy_window(interface.viewer.window)
+                        exit_sim = True
+                        break
+
+                # at end of path, start counting towards our limit
+                if ii > seq.shape[0]-1:
+                    ii = seq.shape[0]-1
+                    # print(f"{colors.yellow}AT END OF CURRENT SEQUENCE{colors.endc}")
+
+                    # check if at the end of the target sequence, and not
+                    # already at the last target, if so start thread to
+                    # generate next path
+                    if seq_count == len(target['seq'])-1:
+                        # print(f"{colors.yellow}AT END OF SEQUENCE LIST{colors.endc}")
+                        if target_count < len(targets)-1:
+                            # print(f"{colors.yellow}NOT AT END OF TARGET LIST{colors.endc}")
+                            # if not at last target, check if thread started to gen next path
+                            if not path_gen_thread_started:
+                                # print(f"{colors.yellow}STARTING PATH GEN THREAD{colors.endc}")
+                                path_gen_thread_started = True
+                                # === START THREAD TO GEN NEXT PATH ===
+                                new_thread = Thread(
+                                    target=gen_path,
+                                    args=(
+                                        targets[target_count+1],
+                                        np.copy(feedback['q']),
+                                        # targets[target_count-1]['payload_ctx'][-1][-1] if target_count > 0 else -1
+                                        targets[target_count]['payload_ctx'][-1][-1]
+                                    )
+                                )
+                                new_thread.start()
+                            elif new_thread.is_alive():
+                                # print(f"{colors.yellow}WAITING FOR PATH TO GENERATE{colors.endc}")
+                                next_path_ready = False
+                            elif not new_thread.is_alive():
+                                # print(f"{colors.yellow}PATH READY{colors.endc}")
+                                next_path_ready = True
+                                new_thread.handled = True
+                        else:
+                            # print(f"{colors.yellow}AT END OF TARGET LIST{colors.endc}")
+                            # there is no next path, so set to True to exit loop
+                            next_path_ready = True
+                    else:
+                        # still have sequences to go through, so no need to generate a path yet
+                        next_path_ready = True
+
+                    # at the end of the current seq path, track how many steps pass
+                    step_limit_cnt += 1
+
+                    if next_path_ready:
+                        # print(f"{colors.green}PATH READY CHECK: PASS{colors.endc}")
+                        # check within error thres for set number of steps
+                        if at_error_count > target_error_count:
+                            print(f"{colors.green}AT ERROR COUNT CHECK: PASS{colors.endc}")
+                            move_to_next_target = True
+                        # check if buffer time passed (0 for PD, non zero for adaptive)
+                        elif step_limit_cnt > step_limit:
+                            move_to_next_target = True
+                            print(f"{colors.red}REACHED STEP LIMIT{colors.endc}")
 
                 if print_cnt % 1000 == 0:
                     hand_abg = transform.euler_from_matrix(
@@ -733,43 +757,32 @@ try:
 
                 # pick/place along x
                 if abs(target['global_target_heading'][0]) == 1:
-                    # u = ctrlry.generate(
                     u = ctrlrx.generate(
                         q=feedback['q'],
                         dq=feedback['dq'],
                         target=seq[ii][:6],
-                        # target=seq[-1][:6],
-                        # xyz_offset=pen_buffer
-                        # target_vel=np.hstack([vel, np.zeros(3)])
                         )
                     training_signal = ctrlrx.training_signal[1:4]
+
                 # pick/place along y
                 elif abs(target['global_target_heading'][1]) == 1:
-                    # u = ctrlrx.generate(
                     u = ctrlry.generate(
                         q=feedback['q'],
                         dq=feedback['dq'],
                         target=seq[ii][:6],
-                        # target=seq[-1][:6],
-                        # xyz_offset=pen_buffer
-                        # target_vel=np.hstack([vel, np.zeros(3)])
                         )
                     training_signal = ctrlry.training_signal[1:4]
+
+                # return home with xyz control only
                 else:
                     u = ctrlr_pos.generate(
                         q=feedback['q'],
                         dq=feedback['dq'],
                         target=seq[ii][:6],
-                        # target=seq[-1][:6],
-                        # xyz_offset=pen_buffer
-                        # target_vel=np.hstack([vel, np.zeros(3)])
                         )
                     training_signal = ctrlr_pos.training_signal[1:4]
 
-
                 # TODO set dimensions being adapted as list of bools
-                # print(feedback["q"][:4])
-                # print(np.array(ctrlr.training_signal[:4]))
                 if use_adapt:
                     u_adapt[1:4] = adapt.generate(
                         input_signal=np.asarray(feedback["q"][1:4]),
@@ -784,42 +797,38 @@ try:
                         train_track.append(training_signal)
                         input_track.append(feedback["q"][1:4])
 
-                # if target['open_gripper'][ii] != -1:
-                # if seq[ii][-1] != -1:
-                #     interface.open_hand(seq[ii][-1])
+                # open / close gripper
                 if not sim:
                     if step_limit_cnt == 0:
                         if seq[ii][-1] == 1:
                             interface.open_hand(True)
-                            # print('opening hand')
-                            # time.sleep(dt)
                         elif seq[ii][-1] == 0:
-                            # print('closing hand')
                             interface.open_hand(False)
-                            # time.sleep(dt)
 
-                    # apply the control signal, step the sim forward
+                    # apply the control signal
                     interface.send_forces(np.array(u, dtype='float32'))
+
                 else:
+                    # sim requires extra work because gripper is simulated
+                    # in force mode, whereas the real gripper is in position mode.
+                    # Because of this a constant control signal needs to be sent
+                    # to the gripper. To account for this keep track of the last
+                    # grip command for moments when no open/close command
+                    # is sent to the real arm
+
+                    # grip force
                     uf = 4
                     if seq[ii][-1] == 1:
                         u_grip = [uf, uf, uf]
                         last_grip = u_grip
-                        # print('opening hand')
                     elif seq[ii][-1] == 0:
                         u_grip = [-uf, -uf, -uf]
                         last_grip = u_grip
-                        # print('closing hand')
                     else:
                         if last_grip is None:
                             # first target, so leave gripper as is
                             u_grip = [0, 0, 0]
                         else:
-                            # require open / close force to maintain
-                            # hand position, the real jaco's hand works
-                            # in position mode, so just use the last
-                            # non-zero gripper force to maintain the correct
-                            # open or close position
                             u_grip = last_grip
 
                     interface.send_forces(np.hstack((u, u_grip)))
@@ -849,15 +858,8 @@ try:
                             axes=axes
                         )
                     )
-                # track data
-                # ee_track.append(np.copy(hand_xyz))
-                # q_track.append(np.copy(feedback['q']))
 
-            # if target['action'] == 'dropoff':
-            #     open_gripper = False
-            # elif target['action'] == 'pickup':
-            #     open_gripper = True
-            if exit:
+            if exit_sim:
                 break
 
 except Exception as e:
@@ -869,7 +871,7 @@ finally:
         interface.send_target_angles(START_ANGLES)
     interface.disconnect()
 
-    # segmentation_thread.handled = True
+    # stop segmentation thread
     colseg.running = False
 
     if save_weights:
