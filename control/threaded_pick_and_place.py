@@ -68,15 +68,18 @@ else:
     weights = None
 
 dt = 0.001
-error_thres = 0.04
+error_thres = 0.045
 target_error_count = 100 # number of steps to maintain sub error_thres error level
 grip_steps = 220
 # kp = 50
 # kv = 7
 # ko = 170
-kp = 30
-kv = 5
-ko = 102
+# kp = 30
+# kv = 5
+# ko = 102
+kp = 23
+kv = 4.79
+ko = 78.2
 axes = 'rxyz'
 # for conversion between quat and euler
 # the direction in EE local coordinates that the pen tip is facing
@@ -86,8 +89,9 @@ approach_dist = 0.15
 # for plotting to improve arrow visibility
 # sampling = 25
 # steps after path planner reaches end to allow for controller to catch up
-step_limit = 4000 if backend != 'pd' else 0
-learning_rate=2.5e-5
+step_limit = 2000 if backend != 'pd' else 500
+# learning_rate = 2.5e-5
+learning_rate = 5e-5
 
 # rotate base wrt config default
 START_ANGLES = np.array(
@@ -172,22 +176,22 @@ targets = [
         },
         'mass': True
     },
-    {
-        'name': 'home',
-        'pos': np.array([0.0, 0.0, 0.9]),
-        'action': 'reach',
-        'global_target_heading': np.array([0, 0, 0]),
-        'path': {
-            'type': 'linear',
-            'kwargs': {
-                'max_a': 1,
-                'max_v': 1,
-                'dt': dt,
-                'axes': axes
-            },
-        },
-        'mass': False
-    }
+    # {
+    #     'name': 'home',
+    #     'pos': np.array([0.0, 0.0, 0.9]),
+    #     'action': 'reach',
+    #     'global_target_heading': np.array([0, 0, 0]),
+    #     'path': {
+    #         'type': 'linear',
+    #         'kwargs': {
+    #             'max_a': 1,
+    #             'max_v': 1,
+    #             'dt': dt,
+    #             'axes': axes
+    #         },
+    #     },
+    #     'mass': False
+    # }
 
 ]
 
@@ -196,7 +200,7 @@ if not sim:
     # mask area of camera where we count pixels for detecting jar
     detection_mask = np.zeros((480, 640), dtype='uint8')
     detection_mask[:, 140:500] = int(1)
-    detection_thres=15000 # number of pixels that need to have hsv color
+    detection_thres=5000 # number of pixels that need to have hsv color
     kernel_size = (7, 7)
     get_contours = True
 
@@ -572,22 +576,25 @@ try:
             # can proceed to the next target
 
     # create opreational space controller
-    damping = Damping(robot_config, kv=10)
+    damping = Damping(robot_config, kv=4)
     resting = RestingConfig(
         robot_config,
-        rest_angles=[None, 3.14, None, None, None, None]
+        rest_angles=[0.85, 2.2, None, None, None, None]
     )
     # for returning home, can have lower gains
     # ctrlr_pos = OSC(robot_config, kp=25, ko=0, kv=5, null_controllers=[damping],
-    ctrlr_pos = OSC(robot_config, kp=200, ko=0, kv=7, null_controllers=[damping],
+    ctrlr_pos = OSC(robot_config, kp=200, ko=0, kv=7, null_controllers=[resting],
+    # ctrlr_pos = OSC(robot_config, kp=200, ko=0, kv=7, null_controllers=[damping, resting],
                 vmax=None,
                 ctrlr_dof=[True, True, True, False, False, False])
 
-    ctrlrx = OSC(robot_config, kp=kp, ko=ko, kv=kv, null_controllers=[damping],
+    ctrlrx = OSC(robot_config, kp=kp, ko=ko, kv=kv, null_controllers=[resting],
+    # ctrlrx = OSC(robot_config, kp=kp, ko=ko, kv=kv, null_controllers=[damping, resting],
                 vmax=None,
                 # ctrlr_dof=[True, True, True, True, False, True])
                 ctrlr_dof=[True, True, True, True, True, True])
-    ctrlry = OSC(robot_config, kp=kp, ko=ko, kv=kv, null_controllers=[damping],
+    ctrlry = OSC(robot_config, kp=kp, ko=ko, kv=kv, null_controllers=[resting],
+    # ctrlry = OSC(robot_config, kp=kp, ko=ko, kv=kv, null_controllers=[damping, resting],
                 vmax=None,
                 ctrlr_dof=[True, True, True, False, True, True])
 
@@ -840,7 +847,7 @@ try:
                         elif seq[ii][-1] == 0:
                             interface.open_hand(False)
                             if target['action'] == 'pickup':
-                                if pl_ctx_sum > 50:
+                                if pl_ctx_sum > 10 and ii == seq.shape[0]-1:
                                     pl_ctx = 1
                                 else:
                                     pl_ctx = -1
