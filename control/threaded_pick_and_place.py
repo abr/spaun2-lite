@@ -37,6 +37,7 @@ save_weights = False
 load_weights = False
 debug = False
 backend = 'pd'
+mujoco_mirror = False
 
 if 'plot' in sys.argv:
     plot = True
@@ -108,6 +109,16 @@ else:
     import abr_jaco2
     robot_config = abr_jaco2.Config()
     interface = abr_jaco2.Interface(robot_config)
+
+if mujoco_mirror:
+    from mujoco_mirror import MujocoMirror
+    sim_vis = MujocoMirror("jaco2", axes=axes)
+    # mujoco_thread = Thread(
+    #     target = sim_vis.threaded_step,
+    # )
+    # mujoco_thread.start()
+
+
 
 targets = [
     {
@@ -632,6 +643,10 @@ try:
     #     interface.init_force_mode()
     pl_ctx_sum = 0
 
+    # for mujoco mirror to align gripper joint
+    last_grip_q = None
+    grip_q = 0.1
+
     for target_count, target in enumerate(targets):
         print('Getting start state information')
         feedback = interface.get_feedback()
@@ -733,7 +748,7 @@ try:
                                 # print(f"{colors.yellow}STARTING PATH GEN THREAD{colors.endc}")
                                 path_gen_thread_started = True
                                 # === START THREAD TO GEN NEXT PATH ===
-                                new_thread = Thread(
+                                path_thread = Thread(
                                     target=gen_path,
                                     args=(
                                         targets[target_count+1],
@@ -742,14 +757,14 @@ try:
                                         targets[target_count]['payload_ctx'][-1][-1]
                                     )
                                 )
-                                new_thread.start()
-                            elif new_thread.is_alive():
+                                path_thread.start()
+                            elif path_thread.is_alive():
                                 # print(f"{colors.yellow}WAITING FOR PATH TO GENERATE{colors.endc}")
                                 next_path_ready = False
-                            elif not new_thread.is_alive():
+                            elif not path_thread.is_alive():
                                 # print(f"{colors.yellow}PATH READY{colors.endc}")
                                 next_path_ready = True
-                                new_thread.handled = True
+                                path_thread.handled = True
                         else:
                             # print(f"{colors.yellow}AT END OF TARGET LIST{colors.endc}")
                             # there is no next path, so set to True to exit loop
@@ -771,6 +786,49 @@ try:
                         elif step_limit_cnt > step_limit:
                             move_to_next_target = True
                             print(f"{colors.red}REACHED STEP LIMIT{colors.endc}")
+
+                if mujoco_mirror:
+                    # open_q = [0.3, 0.3, 0.3]
+                    # close_q = [1, 1, 1]
+
+                    # if seq[ii][-1] == 1:
+                    #     grip_q += 1/grip_steps
+                    #     last_grip_q = grip_q
+                    # elif seq[ii][-1] == 0:
+                    #     grip_q -= 1/grip_steps
+                    #     last_grip_q = grip_q
+                    # elif seq[ii][-1] == -1:
+                    #     if last_grip_q is None:
+                    #         grip_q = 0
+                    #         last_grip_q = grip_q
+                    #     else:
+                    #         grip_q = last_grip_q
+
+                    # get angles for gripper
+                    # if seq[ii][-1] == 1:
+                    #     grip_q = open_q
+                    #     last_grip = grip_q
+                    # elif seq[ii][-1] == 0:
+                    #     grip_q = close_q
+                    #     last_grip = grip_q
+                    # else:
+                    #     if last_grip is None:
+                    #         # first target, so leave gripper as is
+                    #         grip_q = open_q
+                    #     else:
+                    #         grip_q = last_grip
+                    # print(grip_q)
+
+                    # sim_vis.q = np.hstack((feedback['q'], grip_q))
+                    # sim_vis.target = seq[-1][:6]
+                    # sim_vis.filtered_target = seq[ii][:6]
+
+                    sim_vis.step(
+                        # q=np.hstack((feedback['q'], [grip_q]*3)),
+                        q=feedback['q'],
+                        target=seq[-1][:6],
+                        filtered_target=seq[ii][:6]
+                    )
 
                 if print_cnt % 1000 == 0:
                     hand_abg = transform.euler_from_matrix(
@@ -818,7 +876,7 @@ try:
                     )
                     # if pl_ctx != target['payload_ctx'][seq_count][ii]:
                     #     print(f"{colors.red}MISMATCH BETWEEN GT ({target['payload_ctx'][seq_count][ii]}) AND COLSEG ({pl_ctx}){colors.endc}")
-                    print(target['payload_ctx'][seq_count][ii])
+                    # print(target['payload_ctx'][seq_count][ii])
 
                     u += u_adapt
 
@@ -856,57 +914,58 @@ try:
                     # apply the control signal
                     interface.send_forces(np.array(u, dtype='float32'))
 
-                else:
-                    # sim requires extra work because gripper is simulated
-                    # in force mode, whereas the real gripper is in position mode.
-                    # Because of this a constant control signal needs to be sent
-                    # to the gripper. To account for this keep track of the last
-                    # grip command for moments when no open/close command
-                    # is sent to the real arm
 
-                    # grip force
-                    uf = 4
-                    if seq[ii][-1] == 1:
-                        u_grip = [uf, uf, uf]
-                        last_grip = u_grip
-                    elif seq[ii][-1] == 0:
-                        u_grip = [-uf, -uf, -uf]
-                        last_grip = u_grip
-                    else:
-                        if last_grip is None:
-                            # first target, so leave gripper as is
-                            u_grip = [0, 0, 0]
-                        else:
-                            u_grip = last_grip
-
-                    interface.send_forces(np.hstack((u, u_grip)))
-
-                    # visualization for debugging
-                    target_geom_id = interface.sim.model.geom_name2id("target")
-                    green = [0, 0.9, 0, 0.5]
-                    red = [0.9, 0, 0, 0.5]
-                    if u_grip[0] > 0:
-                        interface.set_mocap_xyz("target", [0.0, 0, 1.2])
-                        interface.sim.model.geom_rgba[target_geom_id] = green
-                        last_grip = u_grip
-                    elif u_grip[0] < 0:
-                        interface.set_mocap_xyz("target", [0.0, 0, 1.2])
-                        interface.sim.model.geom_rgba[target_geom_id] = red
-                        last_grip = u_grip
-                    else:
-                        interface.set_mocap_xyz("target", [0, 0, -1.2])
-
-                    interface.set_mocap_xyz("target_orientation", seq[ii][:3])
-                    interface.set_mocap_orientation(
-                        "target_orientation",
-                        transform.quaternion_from_euler(
-                            seq[ii][3],
-                            seq[ii][4],
-                            seq[ii][5],
-                            axes=axes
-                        )
-                    )
-
+                # else:
+                #     # sim requires extra work because gripper is simulated
+                #     # in force mode, whereas the real gripper is in position mode.
+                #     # Because of this a constant control signal needs to be sent
+                #     # to the gripper. To account for this keep track of the last
+                #     # grip command for moments when no open/close command
+                #     # is sent to the real arm
+                #
+                #     # grip force
+                #     uf = 4
+                #     if seq[ii][-1] == 1:
+                #         u_grip = [uf, uf, uf]
+                #         last_grip = u_grip
+                #     elif seq[ii][-1] == 0:
+                #         u_grip = [-uf, -uf, -uf]
+                #         last_grip = u_grip
+                #     else:
+                #         if last_grip is None:
+                #             # first target, so leave gripper as is
+                #             u_grip = [0, 0, 0]
+                #         else:
+                #             u_grip = last_grip
+                #
+                #     interface.send_forces(np.hstack((u, u_grip)))
+                #
+                #     # visualization for debugging
+                #     target_geom_id = interface.sim.model.geom_name2id("target")
+                #     green = [0, 0.9, 0, 0.5]
+                #     red = [0.9, 0, 0, 0.5]
+                #     if u_grip[0] > 0:
+                #         interface.set_mocap_xyz("target", [0.0, 0, 1.2])
+                #         interface.sim.model.geom_rgba[target_geom_id] = green
+                #         last_grip = u_grip
+                #     elif u_grip[0] < 0:
+                #         interface.set_mocap_xyz("target", [0.0, 0, 1.2])
+                #         interface.sim.model.geom_rgba[target_geom_id] = red
+                #         last_grip = u_grip
+                #     else:
+                #         interface.set_mocap_xyz("target", [0, 0, -1.2])
+                #
+                #     interface.set_mocap_xyz("target_orientation", seq[ii][:3])
+                #     interface.set_mocap_orientation(
+                #         "target_orientation",
+                #         transform.quaternion_from_euler(
+                #             seq[ii][3],
+                #             seq[ii][4],
+                #             seq[ii][5],
+                #             axes=axes
+                #         )
+                #     )
+                #
             if exit_sim:
                 break
 
@@ -918,6 +977,10 @@ finally:
         interface.init_position_mode()
         interface.send_target_angles(START_ANGLES)
     interface.disconnect()
+
+    if mujoco_mirror:
+        sim_vis.running = False
+        sim_vis.close_sim()
 
     # stop segmentation thread
     colseg.running = False
