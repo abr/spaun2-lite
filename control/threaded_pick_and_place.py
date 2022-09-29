@@ -72,15 +72,22 @@ dt = 0.001
 error_thres = 0.045
 target_error_count = 100 # number of steps to maintain sub error_thres error level
 grip_steps = 220
+
+# high but best performance
 # kp = 50
 # kv = 7
 # ko = 170
-# kp = 30
-# kv = 5
-# ko = 102
-kp = 23
-kv = 4.79
-ko = 78.2
+
+# medium
+kp = 30
+kv = 5
+ko = 102
+
+# minimum
+# kp = 23
+# kv = 4.79
+# ko = 78.2
+
 axes = 'rxyz'
 # for conversion between quat and euler
 # the direction in EE local coordinates that the pen tip is facing
@@ -614,6 +621,8 @@ try:
 
     # create our adaptive controller
     if use_adapt:
+        ens_kwargs = {'radius': 2}
+
         adapt = DynamicsAdaptation(
             n_neurons=1000,
             n_ensembles=1,
@@ -625,7 +634,8 @@ try:
             spherical=True,
             backend=backend,
             payload_ctx=True,
-            weights=weights
+            weights=weights,
+            **ens_kwargs
         )
     if track_data:
         q_track = []
@@ -659,7 +669,7 @@ try:
                 targets[target_count-1]['payload_ctx'][-1][-1] if target_count > 0 else -1
             )
 
-            interface.init_force_mode()
+            # interface.init_force_mode()
 
         # for proper visualization of gripper in mujoco
         last_grip = None
@@ -726,8 +736,8 @@ try:
 
                 if sim:
                     # check for closing sim
-                    if interface.viewer.exit:
-                        glfw.destroy_window(interface.viewer.window)
+                    if sim_vis.interface.viewer.exit:
+                        glfw.destroy_window(sim_vis.interface.viewer.window)
                         exit_sim = True
                         break
 
@@ -890,6 +900,7 @@ try:
                     # if pl_ctx != target['payload_ctx'][seq_count][ii]:
                     #     print(f"{colors.red}MISMATCH BETWEEN GT ({target['payload_ctx'][seq_count][ii]}) AND COLSEG ({pl_ctx}){colors.endc}")
                     # print(target['payload_ctx'][seq_count][ii])
+                    # print(pl_ctx)
 
                     u += u_adapt
 
@@ -926,6 +937,10 @@ try:
 
                     # apply the control signal
                     # u[:6] *= 0
+
+                    if ii == 0:
+                        interface.init_force_mode()
+
                     interface.send_forces(np.array(u, dtype='float32'))
 
 
@@ -987,6 +1002,8 @@ except Exception as e:
     print(e)
     print(traceback.format_exc())
 finally:
+    if backend != 'pd':
+        adapt.sim.close()
     if not sim:
         interface.init_position_mode()
         interface.send_target_angles(START_ANGLES)

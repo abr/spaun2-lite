@@ -61,7 +61,7 @@ class DynamicsAdaptation:
         n_output,
         n_neurons=1000,
         n_ensembles=1,
-        seed=None,
+        seed=0,
         pes_learning_rate=1e-6,
         intercepts=None,
         weights=None,
@@ -76,7 +76,7 @@ class DynamicsAdaptation:
         backend='cpu',
         use_probes=False,
         payload_ctx=False,
-        **kwargs
+        **ens_kwargs
     ):
         if use_probes:
             self.probes = []
@@ -134,7 +134,11 @@ class DynamicsAdaptation:
             intercepts = intercepts.reshape((n_ensembles, n_neurons))
 
         if weights is None:
+            # if backend == 'cpu':
             weights = np.zeros((self.n_ensembles, n_output, self.n_neurons))
+            # else:
+            #     weights = lambda x: np.zeros(n_output) #np.zeros((n_output, n_input+1 if self.payload_ctx else n_input))
+
             print(f"{c.yellow}Initializing connection weights to all zeros{c.endc}")
         else:
             print(f"{c.yellow}Using trained weights{c.endc}")
@@ -178,7 +182,7 @@ class DynamicsAdaptation:
 
         self.nengo_model = nengo.Network(seed=seed)
         # Set the default neuron type for the network
-        self.nengo_model.config[nengo.Ensemble].neuron_type = nengo.LIF()
+        self.nengo_model.config[nengo.Ensemble].neuron_type = nengo.SpikingRectifiedLinear()
         with self.nengo_model:
 
             def input_signals_func(t):
@@ -200,43 +204,87 @@ class DynamicsAdaptation:
             self.adapt_ens = []
             self.conn_learn = []
             for ii in range(self.n_ensembles):
-                self.adapt_ens.append(
-                    nengo.Ensemble(
-                        n_neurons=self.n_neurons,
-                        dimensions=n_input,
-                        intercepts=intercepts[ii],
-                        # radius=np.sqrt(n_input),
-                        radius=2 if self.payload_ctx else 1,
-                        encoders=encoders[ii],
-                        **kwargs,
+                if backend == 'cpu':
+                    self.adapt_ens.append(
+                        nengo.Ensemble(
+                            n_neurons=self.n_neurons,
+                            dimensions=n_input,
+                            intercepts=intercepts[ii],
+                            # radius=np.sqrt(n_input),
+                            # radius=2 if self.payload_ctx else 1,
+                            encoders=encoders[ii],
+                            seed=self.seed,
+                            **ens_kwargs,
+                        )
                     )
-                )
+
+                elif backend == 'fpga':
+                    self.adapt_ens.append(
+                        FpgaPesEnsembleNetwork(
+                            board,
+                            n_neurons=self.n_neurons,
+                            dimensions=n_input,
+                            # intercepts=intercepts[ii],
+                            # radius=np.sqrt(n_input),
+                            # radius=2 if self.payload_ctx else 1,
+                            # encoders=encoders[ii],
+                            learning_rate=pes_learning_rate,
+                            seed=self.seed,
+                            # function=weights
+                            # **ens_kwargs,
+                        )
+                    )
+                    self.adapt_ens[ii].ensemble.intercepts = intercepts[ii]
+                    self.adapt_ens[ii].ensemble.encoders = encoders[ii]
+                    self.adapt_ens[ii].ensemble.radius = ens_kwargs['radius']
+                    self.adapt_ens[ii].ensemble.transform = weights[ii]
+
+                else:
+                    raise ValueError("Invalid backend, choose cpu or fpga")
                 if use_probes:
                     self.probes.append(nengo.Probe(self.adapt_ens[-1].neurons, synapse=None))
 
-                # hook up input signal to adaptive population to provide context
-                nengo.Connection(
-                    input_signals,
-                    self.adapt_ens[ii],
-                    synapse=self.tau_input,
-                )
-
-                self.conn_learn.append(
+                if backend == 'cpu':
+                    # hook up input signal to adaptive population to provide context
                     nengo.Connection(
-                        self.adapt_ens[ii].neurons,
-                        output,
-                        learning_rule_type=nengo.PES(pes_learning_rate),
-                        transform=weights[ii],
-                        synapse=self.tau_output,
+                        input_signals,
+                        self.adapt_ens[ii],
+                        synapse=self.tau_input,
                     )
-                )
 
-                # hook up the training signal to the learning rule
-                nengo.Connection(
-                    training_signals,
-                    self.conn_learn[ii].learning_rule,
-                    synapse=self.tau_training,
-                )
+                    self.conn_learn.append(
+                        nengo.Connection(
+                            self.adapt_ens[ii].neurons,
+                            output,
+                            learning_rule_type=nengo.PES(pes_learning_rate),
+                            transform=weights[ii],
+                            synapse=self.tau_output,
+                        )
+                    )
+
+                    # hook up the training signal to the learning rule
+                    nengo.Connection(
+                        training_signals,
+                        self.conn_learn[ii].learning_rule,
+                        synapse=self.tau_training,
+                    )
+                else:
+                    nengo.Connection(
+                        input_signals,
+                        self.adapt_ens[ii].input,
+                        synapse=self.tau_input
+                    )
+                    nengo.Connection(
+                        training_signals,
+                        self.adapt_ens[ii].error,
+                        synapse=self.tau_training,
+                    )
+                    nengo.Connection(
+                        self.adapt_ens[ii].output,
+                        output,
+                        synapse=self.tau_output
+                    )
+
 
         nengo.rc.set("decoder_cache", "enabled", "False")
         if backend == 'fpga':
@@ -312,7 +360,8 @@ class DynamicsAdaptation:
         folder and file respectively
         """
 
-        return [
-            self.sim.signals[self.sim.model.sig[conn]["weights"]]
-            for conn in self.conn_learn
-        ]
+        if self.backend == 'cpu':
+            return [
+                self.sim.signals[self.sim.model.sig[conn]["weights"]]
+                for conn in self.conn_learn
+            ]
