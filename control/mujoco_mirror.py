@@ -3,28 +3,30 @@ from abr_control.utils import transformations as transform
 from abr_control.arms.mujoco_config import MujocoConfig
 from abr_control.interfaces.mujoco import Mujoco
 import glfw
+import time
 
 class MujocoMirror:
     def __init__(self, robot_name, dt=0.001, axes='rxyz', real_to_sim_offset=None):
         self.robot_config = MujocoConfig("jaco2")
         self.interface = Mujoco(self.robot_config, dt=dt)
         self.interface.connect(
-            # joint_names=[
-            #     'joint0',
-            #     'joint1',
-            #     'joint2',
-            #     'joint3',
-            #     'joint4',
-            #     'joint5',
-            #     'joint_thumb',
-            #     'joint_index',
-            #     'joint_pinky'
-            # ]
+            joint_names=[
+                'joint0',
+                'joint1',
+                'joint2',
+                'joint3',
+                'joint4',
+                'joint5',
+                'joint_thumb',
+                'joint_index',
+                'joint_pinky'
+            ]
         )
         # self.interface.get_feedback()
         # self.interface.send_forces(np.zeros(9))
 
         self.axes = axes
+        self.dt = dt
 
         # real arm has a vertical offset due to mounting base
         # this offsets targets so visualization aligns with real arm
@@ -41,6 +43,8 @@ class MujocoMirror:
             if self.q is not None:
                 self.step(self.q, self.target, self.filtered_target)
                 self.q = None
+            else:
+                time.sleep(self.dt)
 
     def step(self, q, target=None, filtered_target=None):
         # print('simstep')

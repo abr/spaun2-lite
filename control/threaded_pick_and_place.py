@@ -37,7 +37,7 @@ save_weights = False
 load_weights = False
 debug = False
 backend = 'pd'
-mujoco_mirror = False
+mujoco_mirror = True
 
 if 'plot' in sys.argv:
     plot = True
@@ -787,22 +787,22 @@ try:
                             move_to_next_target = True
                             print(f"{colors.red}REACHED STEP LIMIT{colors.endc}")
 
-                if mujoco_mirror:
-                    # open_q = [0.3, 0.3, 0.3]
-                    # close_q = [1, 1, 1]
+                if mujoco_mirror and ii%2 == 0:
+                    close_q = [0.3, 0.3, 0.3]
+                    open_q = [1, 1, 1]
 
-                    # if seq[ii][-1] == 1:
-                    #     grip_q += 1/grip_steps
-                    #     last_grip_q = grip_q
-                    # elif seq[ii][-1] == 0:
-                    #     grip_q -= 1/grip_steps
-                    #     last_grip_q = grip_q
-                    # elif seq[ii][-1] == -1:
-                    #     if last_grip_q is None:
-                    #         grip_q = 0
-                    #         last_grip_q = grip_q
-                    #     else:
-                    #         grip_q = last_grip_q
+                    if seq[ii][-1] == 1:
+                        grip_q += 2/grip_steps
+                        last_grip_q = grip_q
+                    elif seq[ii][-1] == 0:
+                        grip_q -= 2/grip_steps
+                        last_grip_q = grip_q
+                    elif seq[ii][-1] == -1:
+                        if last_grip_q is None:
+                            grip_q = 0.1
+                            last_grip_q = grip_q
+                        else:
+                            grip_q = last_grip_q
 
                     # get angles for gripper
                     # if seq[ii][-1] == 1:
@@ -814,20 +814,33 @@ try:
                     # else:
                     #     if last_grip is None:
                     #         # first target, so leave gripper as is
-                    #         grip_q = open_q
+                    #         grip_q = close_q
                     #     else:
                     #         grip_q = last_grip
                     # print(grip_q)
 
-                    # sim_vis.q = np.hstack((feedback['q'], grip_q))
                     # sim_vis.target = seq[-1][:6]
                     # sim_vis.filtered_target = seq[ii][:6]
+                    # sim_vis.q = np.hstack((feedback['q'], grip_q))
+
+                    # mujoco_thread = Thread(
+                    #     target=sim_vis.step,
+                    #     args=(
+                    #         np.hstack((feedback['q'], grip_q)),
+                    #         seq[-1][:6],
+                    #         seq[ii][:6]
+                    #     )
+                    # )
+                    # if not mujoco_thread.is_alive():
+                    #     mujoco_thread.start()
+
 
                     sim_vis.step(
-                        # q=np.hstack((feedback['q'], [grip_q]*3)),
-                        q=feedback['q'],
-                        target=seq[-1][:6],
-                        filtered_target=seq[ii][:6]
+                        # q=np.hstack((feedback['q'], grip_q)),
+                        q=np.hstack((feedback['q'], [grip_q]*3)),
+                        # q=feedback['q'],
+                        target=np.copy(seq[-1][:6]),
+                        filtered_target=np.copy(seq[ii][:6])
                     )
 
                 if print_cnt % 1000 == 0:
@@ -912,6 +925,7 @@ try:
                                     pl_ctx_sum = 0
 
                     # apply the control signal
+                    # u[:6] *= 0
                     interface.send_forces(np.array(u, dtype='float32'))
 
 
