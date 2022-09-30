@@ -496,12 +496,12 @@ try:
                 # at target, close gripper
                 open_gripper = 0
                 # closing gripper, but have not lifted payload yet
-                pl_ctx = -1
+                # pl_ctx = -1
             elif target['action'] == 'dropoff':
                 # at target open gripper
                 open_gripper = 1
                 # have not released yet, but opening gripper
-                pl_ctx = 1 if target['mass'] else -1
+                # pl_ctx = 1 if target['mass'] else -1
 
 
             # WAYPOINT 4: open/close hand and maintain position depending on whether
@@ -519,7 +519,7 @@ try:
                     ]] * grip_steps
                 )
             )
-            target['payload_ctx'].append(np.array([pl_ctx]*grip_steps))
+            # target['payload_ctx'].append(np.array([pl_ctx]*grip_steps))
 
             # WAYPOINT 5: back up buffer dist and maintain gripper
             path_planner_linear.generate_path(
@@ -558,15 +558,15 @@ try:
                 ))
             )
             # backing up and payload is opposite of what it was before the pickup/dropoff
-            if target['mass']:
-                target['payload_ctx'].append(
-                    np.array([-1*pl_ctx]*len(path_planner_linear.position_path))
-                )
-            else:
-                # empty jar, so mark context as "no mass"
-                target['payload_ctx'].append(
-                    np.array([-1]*len(path_planner_linear.position_path))
-                )
+            # if target['mass']:
+            #     target['payload_ctx'].append(
+            #         np.array([-1*pl_ctx]*len(path_planner_linear.position_path))
+            #     )
+            # else:
+            #     # empty jar, so mark context as "no mass"
+            #     target['payload_ctx'].append(
+            #         np.array([-1]*len(path_planner_linear.position_path))
+            #     )
             # print(len(target['seq']))
 
             # WAYPOINT 6: if we just dropped something off, close the hand
@@ -674,6 +674,7 @@ try:
     # if not sim:
     #     interface.init_force_mode()
     pl_ctx_sum = 0
+    pl_ctx = None
 
     # for mujoco mirror to align gripper joint
     last_grip_q = None
@@ -732,7 +733,7 @@ try:
             # else:
             #     pl_ctx = -1
             #     pl_ctx_sum = 0
-            pl_ctx = -1
+            # pl_ctx = -1
 
             print(f"{colors.yellow}PAYLOAD CONTEXT: {pl_ctx}{colors.endc}")
 
@@ -917,8 +918,9 @@ try:
                         input_signal=np.asarray(feedback["q"][1:4]),
                         training_signal=np.array(training_signal),
                         # payload_ctx=target['payload_ctx'][seq_count][ii]
-                        payload_ctx=pl_ctx
+                        payload_ctx=pl_ctx if pl_ctx is not None else -1
                     )
+                    # print('PLCTX: ', pl_ctx)
 
                     # running on cpu for spike vis
                     class spikeProcessor:
@@ -1005,23 +1007,36 @@ try:
                             if target['action'] == 'pickup':
                                 # running sum of payload context
                                 # check if sum above threshold to set pl_ctx to 1
+                                # print('pickup open hand, counting detections...')
                                 pl_ctx_sum += colseg.detected
                             elif target['action'] == 'dropoff':
+                                # print('dropoff open hand, resetting ctx to -1 and setting sum to 0')
                                 # we are opening the hand and letting go of the payload
                                 pl_ctx = -1
-                                plt_ctx_sum = 0
+                                pl_ctx_sum = 0
                             else:
                                 # else we are dropping off
-                                plt_ctx_sum = 0
+                                # print('not pickup or dropoff, resetting sum to 0')
+                                pl_ctx_sum = 0
                         elif seq[ii][-1] == 0:
                             interface.open_hand(False)
                             if target['action'] == 'pickup':
-                                if pl_ctx_sum > 10 and ii == seq.shape[0]-1:
-                                    pl_ctx = 1
+                                # print('pickup close hand')
+                                if pl_ctx_sum > 10:
+                                    # print('detection sum > 10')
+                                    if ii == seq.shape[0]-1:
+                                        # print('SETTING CTX TO WEIGHTED JAR')
+                                        pl_ctx = 1
+                                    else:
+                                        # print('waiting to have jar in hand to switch ctx')
+                                        pl_ctx = -1
                                 else:
+                                    # print('detection < 10, setting ctx to -1')
                                     pl_ctx = -1
                                     pl_ctx_sum = 0
 
+                        # print('CTX: ', pl_ctx)
+                        # print('SUM: ', pl_ctx_sum)
                     # apply the control signal
                     # u[:6] *= 0
 

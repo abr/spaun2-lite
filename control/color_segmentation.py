@@ -56,11 +56,11 @@ class colSegmentation:
         if detection_mask is not None:
             mask = cv2.bitwise_and(mask, detection_mask, mask=mask)
 
-        # print(np.sum(mask))
         if np.sum(mask) > detect_thres:
             self.detected = True
         else:
             self.detected = False
+        # print('DETECTED: ', np.sum(mask))
 
         resultHSV = cv2.bitwise_and(brightHSV, brightHSV, mask=mask)
 
