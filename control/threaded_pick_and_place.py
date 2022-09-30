@@ -1025,7 +1025,10 @@ try:
                     # apply the control signal
                     # u[:6] *= 0
 
-                    if ii == 0:
+                    if seq_count == 0 and target_count == 0 and ii==0:
+                        print(f"{ii=}")
+                        print(f"{target_count=}")
+                        print(f"{colors.red}INIT FORCE MODE!!!!!!!!!!!!!!!!!!!!!!!!!{colors.endc}")
                         interface.init_force_mode()
 
                     interface.send_forces(np.array(u, dtype='float32'))
