@@ -172,12 +172,13 @@ class DynamicsAdaptation:
                 tmp = None
                 n_input += 1
                 # encoders = np.stack((encoders, np.asarray(ctx)[np.newaxis, :, np.newaxis]), dim=2)
-                print(encoders.shape)
+                print('ENCODERS SHAPE: ', encoders.shape)
                 print(f"+:{np.sum(x for x in ctx if x>0)}")
                 print(f"-:{np.sum(x for x in ctx if x<0)}")
                 # raise Exception
 
         print(f"N INPUT: {n_input}")
+        print(f"N_OUTPUT: {n_output}")
         self.input_signal = np.zeros(n_input)
         self.training_signal = np.zeros(n_output)
         self.output = np.zeros(n_output)
@@ -231,18 +232,20 @@ class DynamicsAdaptation:
                             # radius=2 if self.payload_ctx else 1,
                             # encoders=encoders[ii],
                             learning_rate=pes_learning_rate,
+                            function=lambda x: np.zeros(n_output),
                             # seed=self.seed,
                             # function=weights
                             # **ens_kwargs,
                         )
                     )
-                    self.adapt_ens[ii].seed = self.seed
-                    self.adapt_ens[ii].neuron_type = nengo.SpikingRectifiedLinear()
+                    self.adapt_ens[ii].ensemble.seed = self.seed
+                    self.adapt_ens[ii].ensemble.neuron_type = nengo.SpikingRectifiedLinear()
                     self.adapt_ens[ii].ensemble.intercepts = intercepts[ii]
                     self.adapt_ens[ii].ensemble.encoders = encoders[ii]
                     self.adapt_ens[ii].ensemble.radius = ens_kwargs['radius']
                     # self.adapt_ens[ii].ensemble.transform = weights[ii]
-                    self.adapt_ens[ii].connection.solver = nengo.solvers.NoSolver(weights[ii])
+                    print('WEIGHTS!!!!: ', weights[ii].shape)
+                    self.adapt_ens[ii].connection.solver = nengo.solvers.NoSolver(weights[ii].T)
 
                 else:
                     raise ValueError("Invalid backend, choose cpu or fpga")
@@ -266,6 +269,7 @@ class DynamicsAdaptation:
                             synapse=self.tau_output,
                         )
                     )
+                    print('WEIGHTS!!!!: ', weights[ii].shape)
 
                     # hook up the training signal to the learning rule
                     nengo.Connection(
