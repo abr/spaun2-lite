@@ -27,6 +27,62 @@ from abr_control.utils import colors
 from color_segmentation import colSegmentation
 
 import matplotlib.pyplot as plt
+class spikeProcessor:
+    def __init__(self, neurons_to_show=10, steps_to_show=100):
+        self.buffer_arr = np.full((steps_to_show, neurons_to_show*3), fill_value=None)
+        self.cnt = 0
+        self.neurons_to_show = neurons_to_show
+        self.steps_to_show = steps_to_show
+        self.neuron_idx = np.arange(0, neurons_to_show)
+        self.neuron_idx_buffer = self.neuron_idx + 0.5
+
+        plt.ion()
+        self.fig = plt.figure()
+        self.ax = self.fig.add_subplot(111)
+        self.ax.set_xlim(0, self.steps_to_show)
+        self.ax.set_ylim(0, self.neurons_to_show)
+
+    def proc(self, spikes):
+        """
+        spikes: (n_timesteps, n_neurons)
+            only process the last timestep, and slice for the number of neurons to show,
+            but the entire spike raster is passed in
+        """
+        spikes_slice = np.copy(spikes[-1, :self.neurons_to_show])
+        spikes_slice /= 1000
+
+        spikes1 = spikes_slice * self.neuron_idx
+        spikes1[spikes1==0] = None
+
+        spikes2 = spikes_slice * self.neuron_idx_buffer
+        spikes2[spikes2==0] = None
+
+        interleaved = np.array([val for triplet in zip(spikes1, [None]*self.neurons_to_show, spikes2) for val in triplet])
+
+        self.buffer_arr[1:] = self.buffer_arr[:-1]
+        self.buffer_arr[0] = interleaved
+
+        return self.buffer_arr.flatten(order='C')
+
+    def threaded_plot(self):
+        first = True
+        self.running = True
+        self.new_spikes = None
+        while self.running:
+            if self.new_spikes is not None:
+                if first:
+                    plt_data, = self.ax.plot(np.repeat(np.arange(0, self.steps_to_show), self.neurons_to_show*3), self.new_spikes)
+                    first = False
+                else:
+                    plt_data.set_ydata(self.new_spikes)
+                    self.fig.canvas.draw()
+                    self.fig.canvas.flush_events()
+
+                self.new_spikes = None
+            else:
+                time.sleep(0.001)
+
+
 """
 """
 sim = False
@@ -37,7 +93,7 @@ save_weights = False
 load_weights = False
 debug = False
 backend = 'pd'
-mujoco_mirror = False
+mujoco_mirror = True
 show_spikes = False
 
 if 'plot' in sys.argv:
@@ -65,7 +121,7 @@ if 'debug' in sys.argv:
     debug = True
 
 if load_weights:
-    weights = np.load(f'{backend}_weights.npz')['weights']
+    weights = np.load('weights.npz')['weights']
 else:
     weights = None
 
@@ -657,7 +713,13 @@ try:
                 use_probes=True,
                 **ens_kwargs
             )
-
+            steps_to_show = 100
+            neurons_to_show = 10
+            raster = spikeProcessor(neurons_to_show=neurons_to_show, steps_to_show=steps_to_show)
+            spike_thread = Thread(
+                target=raster.threaded_plot,
+            )
+            spike_thread.start()
 
     if track_data:
         q_track = []
@@ -923,73 +985,31 @@ try:
                     # print('PLCTX: ', pl_ctx)
 
                     # running on cpu for spike vis
-                    class spikeProcessor:
-                        def __init__(self, neurons_to_show=10, steps_to_show=100):
-                            self.buffer_arr = np.full((steps_to_show, neurons_to_show*3), fill_value=None)
-                            self.cnt = 0
-                            self.neurons_to_show = neurons_to_show
-                            self.steps_to_show = steps_to_show
-                            self.neuron_idx = np.arange(0, neurons_to_show)
-                            self.neuron_idx_buffer = self.neuron_idx + 0.5
-
-                        def proc(self, spikes):
-                            """
-                            spikes: (n_timesteps, n_neurons)
-                                only process the last timestep, and slice for the number of neurons to show,
-                                but the entire spike raster is passed in
-                            """
-                            spikes_slice = np.copy(spikes[-1, :self.neurons_to_show])
-                            spikes_slice /= 1000
-
-                            spikes1 = spikes_slice * self.neuron_idx
-                            spikes1[spikes1==0] = None
-
-                            spikes2 = spikes_slice * self.neuron_idx_buffer
-                            spikes2[spikes2==0] = None
-
-                            interleaved = np.array([val for triplet in zip(spikes1, [None]*self.neurons_to_show, spikes2) for val in triplet])
-
-                            self.buffer_arr[1:] = self.buffer_arr[:-1]
-                            self.buffer_arr[0] = interleaved
-
-                            return self.buffer_arr.flatten(order='C')
-
-                        # def threaded_proc(self):
-                        #     self.running = True
-                        #     self.new_spikes = None
-                        #     while self.running:
-                        #         if self.new_spikes is not None:
-
 
                     if show_spikes:
                         _ = adapt_vis.generate(
                             input_signal=np.asarray(feedback["q"][1:4]),
                             training_signal=np.array(training_signal),
                             # payload_ctx=target['payload_ctx'][seq_count][ii]
-                            payload_ctx=pl_ctx
+                            payload_ctx=pl_ctx if pl_ctx is not None else -1
                         )
                         # spikes = adapt_vis.sim.data[adapt_vis.neuron_probe][ii]
 
-                        if ii == 0 and target_count == 0:
-                            steps_to_show = 100
-                            neurons_to_show = 10
-                            raster = spikeProcessor(neurons_to_show=neurons_to_show, steps_to_show=steps_to_show)
-                            raw_spikes = adapt_vis.sim.data[adapt_vis.neuron_probe]
-                            interleaved_spikes = raster.proc(raw_spikes)
-
-                            plt.ion()
-                            fig = plt.figure()
-                            ax = fig.add_subplot(111)
-                            ax.set_xlim(0, steps_to_show)
-                            ax.set_ylim(0, neurons_to_show)
-                            plt_data, = ax.plot(np.repeat(np.arange(0, steps_to_show), neurons_to_show*3), interleaved_spikes)
-                        else:
-                            raw_spikes = adapt_vis.sim.data[adapt_vis.neuron_probe]
-                            interleaved_spikes = raster.proc(raw_spikes)
-
-                            plt_data.set_ydata(interleaved_spikes)
-                            fig.canvas.draw()
-                            fig.canvas.flush_events()
+                        raw_spikes = adapt_vis.sim.data[adapt_vis.neuron_probe]
+                        interleaved_spikes = raster.proc(raw_spikes)
+                        # if ii % 3 == 0:
+                        #     raster.new_spikes = interleaved_spikes
+                        # if ii == 0 and target_count == 0:
+                        #     raw_spikes = adapt_vis.sim.data[adapt_vis.neuron_probe]
+                        #     interleaved_spikes = raster.proc(raw_spikes)
+                        #    # raster.new_spikes = interleaved_spikes
+                        #
+                        # else:
+                        #     raw_spikes = adapt_vis.sim.data[adapt_vis.neuron_probe]
+                        #     interleaved_spikes = raster.proc(raw_spikes)
+                        #
+                        if ii%10 == 0:
+                            raster.new_spikes = interleaved_spikes
 
                     u += u_adapt
 
@@ -1118,12 +1138,15 @@ finally:
         sim_vis.running = False
         sim_vis.close_sim()
 
+    if show_spikes:
+        raster.running = False
+
     # stop segmentation thread
     colseg.running = False
 
     if save_weights:
         weights = adapt.get_weights()
-        np.savez_compressed(f'{backend}_weights.npz', weights=weights)
+        np.savez_compressed('weights.npz', weights=weights)
 
     if track_data:
         np.savez_compressed(

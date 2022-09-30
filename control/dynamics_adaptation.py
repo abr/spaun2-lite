@@ -87,6 +87,8 @@ class DynamicsAdaptation:
             # Change this to your desired device name
             board = "pynq2"
 
+        self.backend = backend
+
         self.dt = dt
         self.payload_ctx = payload_ctx
 
@@ -229,15 +231,18 @@ class DynamicsAdaptation:
                             # radius=2 if self.payload_ctx else 1,
                             # encoders=encoders[ii],
                             learning_rate=pes_learning_rate,
-                            seed=self.seed,
+                            # seed=self.seed,
                             # function=weights
                             # **ens_kwargs,
                         )
                     )
+                    self.adapt_ens[ii].seed = self.seed
+                    self.adapt_ens[ii].neuron_type = nengo.SpikingRectifiedLinear()
                     self.adapt_ens[ii].ensemble.intercepts = intercepts[ii]
                     self.adapt_ens[ii].ensemble.encoders = encoders[ii]
                     self.adapt_ens[ii].ensemble.radius = ens_kwargs['radius']
-                    self.adapt_ens[ii].ensemble.transform = weights[ii]
+                    # self.adapt_ens[ii].ensemble.transform = weights[ii]
+                    self.adapt_ens[ii].connection.solver = nengo.solvers.NoSolver(weights[ii])
 
                 else:
                     raise ValueError("Invalid backend, choose cpu or fpga")
@@ -361,6 +366,7 @@ class DynamicsAdaptation:
         """
 
         if self.backend == 'cpu':
+            print(self.conn_learn)
             return [
                 self.sim.signals[self.sim.model.sig[conn]["weights"]]
                 for conn in self.conn_learn
