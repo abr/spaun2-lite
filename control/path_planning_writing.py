@@ -31,9 +31,9 @@ plot = False
 dt = 0.001
 # np.set_printoptions(threshold=sys.maxsize)
 
-kp = 100
-kv = 14
-ko = 150
+kp = 50
+kv = 7
+ko = 102
 ctrlr_dof = [True, True, True, True, True, False]
 save_loc = 'kp=%i|kv=%i|ko=%i|dof=%i' % (kp, kv, ko, int(np.sum(ctrlr_dof)))
 

@@ -78,8 +78,8 @@ class DynamicsAdaptation:
         payload_ctx=False,
         **ens_kwargs
     ):
-        if use_probes:
-            self.probes = []
+        # if use_probes:
+        #     self.probes = []
         if backend == 'fpga':
             # Set the nengo logging level to 'info' to display all of the information
             # coming back over the ssh connection.
@@ -242,7 +242,7 @@ class DynamicsAdaptation:
                 else:
                     raise ValueError("Invalid backend, choose cpu or fpga")
                 if use_probes:
-                    self.probes.append(nengo.Probe(self.adapt_ens[-1].neurons, synapse=None))
+                    self.neuron_probe = nengo.Probe(self.adapt_ens[-1].neurons, synapse=None)
 
                 if backend == 'cpu':
                     # hook up input signal to adaptive population to provide context

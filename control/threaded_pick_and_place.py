@@ -37,7 +37,8 @@ save_weights = False
 load_weights = False
 debug = False
 backend = 'pd'
-mujoco_mirror = True
+mujoco_mirror = False
+show_spikes = False
 
 if 'plot' in sys.argv:
     plot = True
@@ -637,6 +638,27 @@ try:
             weights=weights,
             **ens_kwargs
         )
+
+        # if backend == 'fpga':
+        # for visualizing spikes
+        if show_spikes:
+            adapt_vis = DynamicsAdaptation(
+                n_neurons=1000,
+                n_ensembles=1,
+                n_input=3,  # we apply adaptation on the most heavily stressed joints
+                n_output=3,
+                pes_learning_rate=learning_rate,
+                means=[3.14, 3.14, 3.14],
+                variances=[3.14, 3.14, 3.14],
+                spherical=True,
+                backend='cpu',
+                payload_ctx=True,
+                weights=weights,
+                use_probes=True,
+                **ens_kwargs
+            )
+
+
     if track_data:
         q_track = []
         train_track = []
@@ -797,7 +819,7 @@ try:
                             move_to_next_target = True
                             print(f"{colors.red}REACHED STEP LIMIT{colors.endc}")
 
-                if mujoco_mirror and ii%2 == 0:
+                if mujoco_mirror and ii%4 == 0:
                     close_q = [0.3, 0.3, 0.3]
                     open_q = [1, 1, 1]
 
@@ -897,10 +919,75 @@ try:
                         # payload_ctx=target['payload_ctx'][seq_count][ii]
                         payload_ctx=pl_ctx
                     )
-                    # if pl_ctx != target['payload_ctx'][seq_count][ii]:
-                    #     print(f"{colors.red}MISMATCH BETWEEN GT ({target['payload_ctx'][seq_count][ii]}) AND COLSEG ({pl_ctx}){colors.endc}")
-                    # print(target['payload_ctx'][seq_count][ii])
-                    # print(pl_ctx)
+
+                    # running on cpu for spike vis
+                    class spikeProcessor:
+                        def __init__(self, neurons_to_show=10, steps_to_show=100):
+                            self.buffer_arr = np.full((steps_to_show, neurons_to_show*3), fill_value=None)
+                            self.cnt = 0
+                            self.neurons_to_show = neurons_to_show
+                            self.steps_to_show = steps_to_show
+                            self.neuron_idx = np.arange(0, neurons_to_show)
+                            self.neuron_idx_buffer = self.neuron_idx + 0.5
+
+                        def proc(self, spikes):
+                            """
+                            spikes: (n_timesteps, n_neurons)
+                                only process the last timestep, and slice for the number of neurons to show,
+                                but the entire spike raster is passed in
+                            """
+                            spikes_slice = np.copy(spikes[-1, :self.neurons_to_show])
+                            spikes_slice /= 1000
+
+                            spikes1 = spikes_slice * self.neuron_idx
+                            spikes1[spikes1==0] = None
+
+                            spikes2 = spikes_slice * self.neuron_idx_buffer
+                            spikes2[spikes2==0] = None
+
+                            interleaved = np.array([val for triplet in zip(spikes1, [None]*self.neurons_to_show, spikes2) for val in triplet])
+
+                            self.buffer_arr[1:] = self.buffer_arr[:-1]
+                            self.buffer_arr[0] = interleaved
+
+                            return self.buffer_arr.flatten(order='C')
+
+                        # def threaded_proc(self):
+                        #     self.running = True
+                        #     self.new_spikes = None
+                        #     while self.running:
+                        #         if self.new_spikes is not None:
+
+
+                    if show_spikes:
+                        _ = adapt_vis.generate(
+                            input_signal=np.asarray(feedback["q"][1:4]),
+                            training_signal=np.array(training_signal),
+                            # payload_ctx=target['payload_ctx'][seq_count][ii]
+                            payload_ctx=pl_ctx
+                        )
+                        # spikes = adapt_vis.sim.data[adapt_vis.neuron_probe][ii]
+
+                        if ii == 0 and target_count == 0:
+                            steps_to_show = 100
+                            neurons_to_show = 10
+                            raster = spikeProcessor(neurons_to_show=neurons_to_show, steps_to_show=steps_to_show)
+                            raw_spikes = adapt_vis.sim.data[adapt_vis.neuron_probe]
+                            interleaved_spikes = raster.proc(raw_spikes)
+
+                            plt.ion()
+                            fig = plt.figure()
+                            ax = fig.add_subplot(111)
+                            ax.set_xlim(0, steps_to_show)
+                            ax.set_ylim(0, neurons_to_show)
+                            plt_data, = ax.plot(np.repeat(np.arange(0, steps_to_show), neurons_to_show*3), interleaved_spikes)
+                        else:
+                            raw_spikes = adapt_vis.sim.data[adapt_vis.neuron_probe]
+                            interleaved_spikes = raster.proc(raw_spikes)
+
+                            plt_data.set_ydata(interleaved_spikes)
+                            fig.canvas.draw()
+                            fig.canvas.flush_events()
 
                     u += u_adapt
 

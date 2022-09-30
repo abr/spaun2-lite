@@ -175,6 +175,11 @@ class colSegmentation:
             placeholder = None
             combinedResult = None
             cv2.namedWindow('live_stream')
+            # cv2.setWindowProperty(
+            #     "live_stream",
+            #     cv2.WND_PROP_FULLSCREEN,
+            #     cv2.WINDOW_FULLSCREEN
+            # )
             while self.running:
                 ret, frame = cam.read()
                 brightHSV = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV)
