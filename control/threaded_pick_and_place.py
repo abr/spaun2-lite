@@ -1127,8 +1127,6 @@ except Exception as e:
     print(e)
     print(traceback.format_exc())
 finally:
-    if backend != 'pd':
-        adapt.sim.close()
     if not sim:
         interface.init_position_mode()
         interface.send_target_angles(START_ANGLES)
@@ -1147,6 +1145,9 @@ finally:
     if save_weights:
         weights = adapt.get_weights()
         np.savez_compressed('weights.npz', weights=weights)
+
+    if backend != 'pd':
+        adapt.sim.close()
 
     if track_data:
         np.savez_compressed(
