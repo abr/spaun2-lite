@@ -31,17 +31,34 @@ plot = False
 dt = 0.001
 # np.set_printoptions(threshold=sys.maxsize)
 
-kp = 50
-kv = 7
-ko = 102
+# kp = 50
+# kv = 7
+# ko = 170
+
+# kp = 50
+# kv = 7
+# ko = 102
+
+# kp = 70
+# kv = 7
+# ko = 120
+
+kp = 100
+kv = 14
+ko = 150
 ctrlr_dof = [True, True, True, True, True, False]
 save_loc = 'kp=%i|kv=%i|ko=%i|dof=%i' % (kp, kv, ko, int(np.sum(ctrlr_dof)))
 
 # load our alphanumerical path
-if len(sys.argv) > 1:
+if len(sys.argv) == 2:
     text = sys.argv[1]
+    save_loc = None
+elif len(sys.argv) == 3:
+    text = sys.argv[1]
+    save_loc = sys.argv[2]
 else:
     text = '1'
+    save_loc = None
 
 # for conversion between quat and euler
 axes = 'rxyz'
@@ -77,6 +94,7 @@ def load_paths(text, save_loc=None, plot=False, char_size=None):
 
     text_paths = {}
     for char in text:
+        print(f"loading char {char} from {save_loc}")
         if char not in text_paths.keys():
             char_save_loc = '%s/%s.npz' % (save_loc, char)
             char_path = np.load(char_save_loc)['arr_0'].T
@@ -96,7 +114,7 @@ def load_paths(text, save_loc=None, plot=False, char_size=None):
 
     return text_paths
 
-text_paths = load_paths(text, plot=False, char_size=char_size)
+text_paths = load_paths(text=text, save_loc=save_loc, plot=False, char_size=char_size)
 
 # instantiate robot config and comm interface
 print('Connecting to arm and interface')

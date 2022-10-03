@@ -126,19 +126,21 @@ else:
     weights = None
 
 dt = 0.001
-error_thres = 0.045
+# error_thres = 0.045
+error_thres = 0.04
+# error_thres = 0.03
 target_error_count = 100 # number of steps to maintain sub error_thres error level
 grip_steps = 220
 
 # high but best performance
-# kp = 50
-# kv = 7
-# ko = 170
+kp = 50
+kv = 7
+ko = 170
 
 # medium
-kp = 30
-kv = 5
-ko = 102
+# kp = 30
+# kv = 5
+# ko = 102
 
 # minimum
 # kp = 23
@@ -150,13 +152,15 @@ axes = 'rxyz'
 # the direction in EE local coordinates that the pen tip is facing
 local_start_heading = np.array([0, 0, 1])
 # writing instrument offset from EE in EE coodrinates
-approach_dist = 0.15
+approach_dist = 0.17
 # for plotting to improve arrow visibility
 # sampling = 25
 # steps after path planner reaches end to allow for controller to catch up
 step_limit = 2000 if backend != 'pd' else 500
-# learning_rate = 2.5e-5
+# learning_rate = 2.5e-5 if not load_weights else 1e-6
+# learning_rate = 7e-5
 learning_rate = 5e-5
+# learning_rate = 1e-4
 
 # rotate base wrt config default
 START_ANGLES = np.array(
@@ -188,7 +192,8 @@ targets = [
     {
         'name': 'jar',
         # 'pos': np.array([0.1, -0.82, 0.62]),
-        'pos': np.array([0.15, -0.82, 0.62]),
+        # 'pos': np.array([0.15, -0.82, 0.62]),
+        'pos': np.array([0.05, -0.82, 0.62]),
         'action': 'pickup', # reach with buffer, open, reach, close, back up
         'global_target_heading': np.array([0, -1, 0]),
         'path': {
@@ -209,48 +214,64 @@ targets = [
     # },
     {
         'name': 'wooden_shelf2',
-        'pos': np.array([0.65, 0.0, 0.83]),
+        # 'pos': np.array([0.67, -0.1, 0.83]),
+        'pos': np.array([0.67, 0.0, 0.83]),
         'action': 'dropoff',
         'global_target_heading': np.array([1, 0, 0]),
         'path': {
             'type': 'arc',
             'kwargs': {'n_timesteps': 1000},
+            # 'type': 'linear',
+            # 'kwargs': {
+            #     'max_a': 1,
+            #     'max_v': 1,
+            #     'dt': dt,
+            #     'axes': axes
+            # },
         },
         'mass': False
     },
-    {
-        'name': 'jar',
-        # 'pos': np.array([-0.1, -0.82, 0.62]),
-        'pos': np.array([-0.05, -0.82, 0.62]),
-        'action': 'pickup', # reach with buffer, open, reach, close, back up
-        'global_target_heading': np.array([0, -1, 0]),
-        'path': {
-            'type': 'arc',
-            'kwargs': {'n_timesteps': 2000},
-        },
-        'mass': True
-    },
     # {
-    #     'name': 'metal_shelf',
-    #     'pos': np.array([0.75, 0.2, 0.73]),
+    #     'name': 'jar',
+    #     # 'pos': np.array([-0.1, -0.82, 0.62]),
+    #     'pos': np.array([-0.05, -0.82, 0.62]),
+    #     'action': 'pickup', # reach with buffer, open, reach, close, back up
+    #     'global_target_heading': np.array([0, -1, 0]),
+    #     'path': {
+    #         'type': 'arc',
+    #         'kwargs': {'n_timesteps': 2000},
+    #     },
+    #     'mass': True
+    # },
+    # # {
+    # #     'name': 'metal_shelf',
+    # #     'pos': np.array([0.75, 0.2, 0.73]),
+    # #     'action': 'dropoff',
+    # #     'global_target_heading': np.array([1, 0, 0]),
+    # #     'path': {
+    # #         'type': 'arc',
+    # #         'kwargs': {'n_timesteps': 1000},
+    # #     },
+    # # },
+    # {
+    #     'name': 'wooden_shelf2',
+    #     'pos': np.array([0.65, 0.1, 0.84]),
     #     'action': 'dropoff',
     #     'global_target_heading': np.array([1, 0, 0]),
     #     'path': {
     #         'type': 'arc',
     #         'kwargs': {'n_timesteps': 1000},
+    #         # 'type': 'linear',
+    #         # 'kwargs': {
+    #         #     'max_a': 1,
+    #         #     'max_v': 1,
+    #         #     'dt': dt,
+    #         #     'axes': axes
+    #         # },
+    #
     #     },
+    #     'mass': True
     # },
-    {
-        'name': 'wooden_shelf2',
-        'pos': np.array([0.65, 0.2, 0.84]),
-        'action': 'dropoff',
-        'global_target_heading': np.array([1, 0, 0]),
-        'path': {
-            'type': 'arc',
-            'kwargs': {'n_timesteps': 1000},
-        },
-        'mass': True
-    },
     # {
     #     'name': 'home',
     #     'pos': np.array([0.0, 0.0, 0.9]),
@@ -328,6 +349,7 @@ try:
         # use approach vec to get correct +/- x/y direction
         approach_vector = approach_dist * target['global_target_heading']
         # also offset z to lift back and up
+        # approach_vector[2] = -0.07 # -approach_dist/2
         approach_vector[2] = -0.05 # -approach_dist/2
         # where we want to approach from
         # NOTE from hand writing demo
@@ -445,6 +467,7 @@ try:
 
         elif target['path']['type'] == 'linear':
             #====LINEAR PATH
+            # print(target['path']['kwargs'])
             path_planner_linear = GaussianPathPlanner(
                 **target['path']['kwargs']
             )
@@ -655,6 +678,7 @@ try:
     resting = RestingConfig(
         robot_config,
         rest_angles=[0.85, 2.2, None, None, None, None]
+        # rest_angles=[0.85, 1.6, None, None, None, None]
     )
     # for returning home, can have lower gains
     # ctrlr_pos = OSC(robot_config, kp=25, ko=0, kv=5, null_controllers=[damping],
@@ -1012,6 +1036,8 @@ try:
                             raster.new_spikes = interleaved_spikes
 
                     u += u_adapt
+                    # if ii%10 == 0:
+                    #     print('u_adapt: ', u_adapt)
 
                     if track_data:
                         train_track.append(training_signal)
@@ -1066,6 +1092,8 @@ try:
                         print(f"{colors.red}INIT FORCE MODE!!!!!!!!!!!!!!!!!!!!!!!!!{colors.endc}")
                         interface.init_force_mode()
 
+                    # if ii % 10 == 0:
+                    #     print('u: ', u)
                     interface.send_forces(np.array(u, dtype='float32'))
 
 

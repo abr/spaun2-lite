@@ -148,8 +148,10 @@ class colSegmentation:
         # hsv = [165, 95, 245]
         # hsv of red balls in plastic jar in lab, lamp and no overhead lights
         # hsv = [3, 67, 87]
-        hsv = [4, 154, 111]
-        thresh = 60
+        # hsv = [4, 154, 111]
+        hsv = [170, 120, 245]
+        # thresh = 60
+        thresh = 40
 
         minHSV = np.array([hsv[0] - thresh, hsv[1] - thresh, hsv[2] - thresh])
         maxHSV = np.array([hsv[0] + thresh, hsv[1] + thresh, hsv[2] + thresh])

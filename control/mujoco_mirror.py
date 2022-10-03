@@ -31,7 +31,8 @@ class MujocoMirror:
         # real arm has a vertical offset due to mounting base
         # this offsets targets so visualization aligns with real arm
         if real_to_sim_offset is None:
-            real_to_sim_offset = [0, 0, -0.1]
+            # real_to_sim_offset = [0, 0, -0.1]
+            real_to_sim_offset = [0, 0, -0.05]
         self.real_to_sim_offset = real_to_sim_offset
 
     def threaded_step(self):
