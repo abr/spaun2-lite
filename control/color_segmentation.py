@@ -149,7 +149,8 @@ class colSegmentation:
         # hsv of red balls in plastic jar in lab, lamp and no overhead lights
         # hsv = [3, 67, 87]
         # hsv = [4, 154, 111]
-        hsv = [170, 120, 245]
+        # hsv = [170, 120, 245]
+        hsv = [158, 68, 146]
         # thresh = 60
         thresh = 40
 

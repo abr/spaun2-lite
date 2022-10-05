@@ -133,9 +133,9 @@ target_error_count = 100 # number of steps to maintain sub error_thres error lev
 grip_steps = 220
 
 # high but best performance
-kp = 50
-kv = 7
-ko = 170
+# kp = 50
+# kv = 7
+# ko = 170
 
 # medium
 # kp = 30
@@ -143,16 +143,16 @@ ko = 170
 # ko = 102
 
 # minimum
-# kp = 23
-# kv = 4.79
-# ko = 78.2
+kp = 23
+kv = 4.79
+ko = 78.2
 
 axes = 'rxyz'
 # for conversion between quat and euler
 # the direction in EE local coordinates that the pen tip is facing
 local_start_heading = np.array([0, 0, 1])
 # writing instrument offset from EE in EE coodrinates
-approach_dist = 0.17
+approach_dist = 0.15
 # for plotting to improve arrow visibility
 # sampling = 25
 # steps after path planner reaches end to allow for controller to catch up
@@ -215,7 +215,8 @@ targets = [
     {
         'name': 'wooden_shelf2',
         # 'pos': np.array([0.67, -0.1, 0.83]),
-        'pos': np.array([0.67, 0.0, 0.83]),
+        # 'pos': np.array([0.67, 0.0, 0.84]),
+        'pos': np.array([0.67, 0.05, 0.84]),
         'action': 'dropoff',
         'global_target_heading': np.array([1, 0, 0]),
         'path': {
@@ -349,7 +350,9 @@ try:
         # use approach vec to get correct +/- x/y direction
         approach_vector = approach_dist * target['global_target_heading']
         # also offset z to lift back and up
-        # approach_vector[2] = -0.07 # -approach_dist/2
+        # if backend == 'cpu' or backend == 'fpga':
+        #     approach_vector[2] = -0.06 # -approach_dist/2
+        # else:
         approach_vector[2] = -0.05 # -approach_dist/2
         # where we want to approach from
         # NOTE from hand writing demo

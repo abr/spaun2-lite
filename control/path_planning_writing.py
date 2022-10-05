@@ -82,7 +82,8 @@ dmp_steps = 2000
 # for plotting to improve arrow visibility
 sampling = 25
 # distance to back away from plane between letters
-backup_buffer = np.array([-0.1, 0, 0])
+# backup_buffer = np.array([-0.1, 0, 0])
+backup_buffer = np.array([-0.05, 0, 0])
 
 def load_paths(text, save_loc=None, plot=False, char_size=None):
     if char_size is None:
@@ -102,6 +103,9 @@ def load_paths(text, save_loc=None, plot=False, char_size=None):
             # then apply the user defined char size scaling
             char_path[0, :] *= (0.5 * char_size[0])
             char_path[1, :] *= (0.5 * char_size[1])
+            if char == '9':
+                char_path[0, :] *= 2.5
+
             text_paths[char] = char_path
 
             if plot:
@@ -115,6 +119,7 @@ def load_paths(text, save_loc=None, plot=False, char_size=None):
     return text_paths
 
 text_paths = load_paths(text=text, save_loc=save_loc, plot=False, char_size=char_size)
+# raise Exception
 
 # instantiate robot config and comm interface
 print('Connecting to arm and interface')
@@ -148,15 +153,23 @@ start_euler = transform.euler_from_quaternion(start_quat, axes)
 
 # get our path to the writing start position
 print('Generating path to board')
-gauss_path_planner = GaussianPathPlanner(
-            max_a=5,
+gauss_path_planner_approach = GaussianPathPlanner(
+            max_a=4,
             max_v=5,
             dt=0.001,
             axes=axes
     )
 
+gauss_path_planner_writing = GaussianPathPlanner(
+            max_a=0.5,
+            max_v=0.9,
+            dt=0.001,
+            axes=axes
+    )
+
+
 # generate the path to the board
-gauss_path_planner.generate_path(
+gauss_path_planner_approach.generate_path(
         state=np.array([
             start_pos[0], start_pos[1], start_pos[2],
             0, 0, 0,
@@ -171,11 +184,12 @@ gauss_path_planner.generate_path(
         ]),
         start_v=0,
         target_v=0,
-        plot=False
+        plot=False,
+        autoadjust_av=False
     )
 
-pos_path = gauss_path_planner.position_path
-ori_path = gauss_path_planner.orientation_path
+pos_path = gauss_path_planner_approach.position_path
+ori_path = gauss_path_planner_approach.orientation_path
 writing_origin = np.copy(pos_path[-1]) + backup_buffer
 
 dmp2 = pydmps.dmp_discrete.DMPs_discrete(n_dmps=2, n_bfs=500, ay=np.ones(2) * 10, dt=dt)
@@ -225,7 +239,7 @@ for ii, char in enumerate(text):
 
 
     # generate the path to the start of our letter
-    gauss_path_planner.generate_path(
+    gauss_path_planner_writing.generate_path(
             state=np.array([
                 pos_path[-1][0], pos_path[-1][1], pos_path[-1][2],
                 0, 0, 0,
@@ -240,17 +254,18 @@ for ii, char in enumerate(text):
             ]),
             start_v=0,
             target_v=0,
+            autoadjust_av=True
         )
 
     # use dmp to imitate our gauss planner
     # dmp3.imitate_path(gauss_path_planner.position_path.T, plot=False)
     # pos_path_to_next_letter = dmp3.rollout(dmp_steps)[0]
-    pos_path_to_next_letter = gauss_path_planner.position_path
+    pos_path_to_next_letter = gauss_path_planner_writing.position_path
     # Add offset to back up from board
     # pos_path_to_next_letter[:, 0] += 0.02
     # dmp3.imitate_path(gauss_path_planner.orientation_path.T, plot=False)
     # ori_path_to_next_letter = dmp3.rollout(dmp_steps)[0]
-    ori_path_to_next_letter = gauss_path_planner.orientation_path
+    ori_path_to_next_letter = gauss_path_planner_writing.orientation_path
 
     pos_path = np.vstack((pos_path, pos_path_to_next_letter))
     ori_path = np.vstack((ori_path, ori_path_to_next_letter))
@@ -259,9 +274,9 @@ for ii, char in enumerate(text):
     ori_path = np.vstack((ori_path, np.ones((dmp_steps, 3))*ori_path[-1]))
 
     # backup to move over to next letter
-    gauss_path_planner.generate_path(
+    gauss_path_planner_writing.generate_path(
             state=np.array([
-                pos_path[-1][0], pos_path[-1][1], pos_path[-1][2],
+                pos_path[-1][0]+0.03, pos_path[-1][1]-0.01, pos_path[-1][2]+0.01,
                 0, 0, 0,
                 ori_path[-1][0], ori_path[-1][1], ori_path[-1][2],
                 0, 0, 0
@@ -272,16 +287,18 @@ for ii, char in enumerate(text):
                 ori_path[-1][0], ori_path[-1][1], ori_path[-1][2],
                 0, 0, 0
             ]),
-            start_v=4,
+            # start_v=4,
+            start_v=0,
             target_v=0,
-            plot=False
+            plot=False,
+            autoadjust_av=True
         )
 
-    pos_path = np.vstack((pos_path, gauss_path_planner.position_path))
-    ori_path = np.vstack((ori_path, gauss_path_planner.orientation_path))
+    pos_path = np.vstack((pos_path, gauss_path_planner_writing.position_path))
+    ori_path = np.vstack((ori_path, gauss_path_planner_writing.orientation_path))
 
 
-gauss_path_planner.generate_path(
+gauss_path_planner_writing.generate_path(
         state=np.array([
             pos_path[-1][0], pos_path[-1][1], pos_path[-1][2],
             0, 0, 0,
@@ -296,16 +313,17 @@ gauss_path_planner.generate_path(
         ]),
         start_v=0,
         target_v=0,
-        plot=False
+        plot=False,
+        autoadjust_av=True
     )
 
 # use dmp to imitate our gauss planner
 # dmp3.imitate_path(gauss_path_planner.position_path.T, plot=False)
 # pos_path_to_next_letter = dmp3.rollout(dmp_steps)[0]
-pos_path_to_next_letter = gauss_path_planner.position_path
+pos_path_to_next_letter = gauss_path_planner_writing.position_path
 # dmp3.imitate_path(gauss_path_planner.orientation_path.T, plot=False)
 # ori_path_to_next_letter = dmp3.rollout(dmp_steps)[0]
-ori_path_to_next_letter = gauss_path_planner.orientation_path
+ori_path_to_next_letter = gauss_path_planner_writing.orientation_path
 
 pos_path = np.vstack((pos_path, pos_path_to_next_letter))
 ori_path = np.vstack((ori_path, ori_path_to_next_letter))
